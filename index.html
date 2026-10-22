@@ -55,8 +55,7 @@ async function boot() {
 function loginView(tab) {
   const tabBtn = (t, l) => `<button onclick="loginView('${t}')" class="${t===tab?btn:btn2} flex-1">${l}</button>`;
   render(`<div class="${card} max-w-sm mx-auto space-y-3">
-    <div class="flex gap-2">${tabBtn('player','Player')}${tabBtn('dm','Dungeon Master')}</div>
-    ${tab==='player' ? `
+    <div class="flex gap-2">${tabBtn('player','Player')}${tabBtn('dm','Dungeon Master')}</div>${tab==='player' ? `
       <input id="u" class="${inp}" placeholder="Username" autocomplete="username">
       <input id="p" type="password" class="${inp}" placeholder="Campaign password" autocomplete="current-password">
       <button onclick="playerLogin()" class="${btn} w-full">Enter Laboratory</button>` : `
@@ -75,14 +74,56 @@ async function dmHome(tab) {
   const { data: cs, error } = await sb.from('campaigns').select('id, name').order('created_at');
   if (error) return fail(error);
 
-  render(`<h2 class="text-xl text-amber-200 mb-3">Your Campaigns (${cs ? cs.length : 0}/5)</h2>
+  render(`
+    <div class="flex justify-between items-center mb-3">
+      <h2 class="text-xl text-amber-200">Your Campaigns (${cs ? cs.length : 0}/5)</h2>
+      <button onclick="openCreateCampaignModal()" class="${btn}"><i class="fa-solid fa-plus mr-1"></i> New Campaign</button>
+    </div>
+    
     <div class="grid sm:grid-cols-2 gap-3 mb-6">${(cs || []).map(c => `
       <div onclick="openCampaign('${c.id}')" class="${card} cursor-pointer hover:border-amber-500 flex justify-between items-center">
         <div>
           <div class="font-bold text-amber-200"><i class="fa-solid fa-book-skull mr-2 text-amber-400"></i>${esc(c.name)}</div>
         </div>
         <i class="fa-solid fa-chevron-right text-slate-500"></i>
-      </div>`).join('')}</div>`);
+      </div>`).join('')}</div>
+      
+    <div id="dm_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>
+  `);
+}
+
+function openCreateCampaignModal() {
+  $('#dm_modal').classList.remove('hidden');
+  $('#dm_modal').innerHTML = `
+    <div class="${card} max-w-sm w-full space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+        <h3 class="text-base font-bold text-amber-300">Create New Campaign</h3>
+        <button onclick="$('#dm_modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-200"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">Campaign Name</label>
+        <input id="new_camp_name" class="${inp} mt-1" placeholder="e.g. Shadows of Second Chance">
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">Join Password (for players)</label>
+        <input id="new_camp_pass" class="${inp} mt-1" placeholder="e.g. secret123">
+      </div>
+      <button onclick="createNewCampaign()" class="${btn} w-full mt-2">Create Campaign</button>
+    </div>
+  `;
+}
+
+async function createNewCampaign() {
+  const name = $('#new_camp_name').value.trim();
+  const pass = $('#new_camp_pass').value.trim();
+  
+  if (!name || !pass) return alert("Please provide both a name and a join password.");
+
+  const { error } = await sb.rpc('dm_create_campaign', { c_name: name, c_pass: pass });
+  if (error) return fail(error);
+  
+  $('#dm_modal').classList.add('hidden');
+  dmHome(); // Refresh the list
 }
 
 async function openCampaign(id) {
@@ -94,18 +135,21 @@ async function openCampaign(id) {
   const { data: logs } = await sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false });
 
   render(`<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> All Campaigns</button>
-    <h2 class="text-xl text-amber-200 mb-3">${esc(c.name)} Overview</h2>
+    <div class="flex justify-between items-end mb-3">
+        <h2 class="text-xl text-amber-200">${esc(c.name)} Overview</h2>
+        <div class="text-xs text-slate-400">Join Password: <strong class="text-amber-100">${esc(c.password)}</strong></div>
+    </div>
     <div class="grid md:grid-cols-2 gap-4">
       <div class="${card} space-y-2">
         <h3 class="text-sm font-bold text-amber-300">Players</h3>
         ${(ps && ps.length) ? ps.map(p => `<div class="p-2 bg-slate-950 rounded text-xs flex justify-between">
           <span class="font-bold text-amber-200">${esc(p.username)}</span>
           <span class="text-slate-400">Bonus: +${p.foraging_bonus || 0}</span>
-        </div>`).join('') : '<p class="text-xs text-slate-500">No players yet.</p>'}
+        </div>`).join('') : '<p class="text-xs text-slate-500">No players yet. Give them your join password to connect!</p>'}
       </div>
       <div class="${card} space-y-2 max-h-[400px] overflow-y-auto">
         <h3 class="text-sm font-bold text-amber-300">Activity Log</h3>
-        ${(logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span>${esc(l.details)}</div>`).join('') : '<p class="text-xs text-slate-500">No logs yet.</p>'}
+        ${(logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span> ${esc(l.details)}</div>`).join('') : '<p class="text-xs text-slate-500">No logs yet.</p>'}
       </div>
     </div>`);
 }
@@ -117,7 +161,7 @@ async function playerRefresh(fromLogin) {
   if (error) return fail(error);
   if (!data) return loginView('player');
   try { sessionStorage.setItem('pc', JSON.stringify(creds)); } catch (e) {}
-  P = data; $('#who').innerHTML = `${esc(P.username)} · ${esc(P.campaign)} <button onclick="logout()" class="ml-2 underline">Log out</button>`;
+  P = data; $('#who').innerHTML = `${esc(P.username)} ·${esc(P.campaign)} <button onclick="logout()" class="ml-2 underline">Log out</button>`;
   playerView(window.ptab || 'lib');
 }
 
@@ -156,12 +200,11 @@ function drawPlayerLib() {
   $('#p_lib_list').innerHTML = filtered.map(i => `<div class="${card} relative">
     <div class="font-semibold text-amber-200 flex justify-between items-start">
       <span><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</span>
-      <button onclick="editQtyPrompt('${i.id}', ${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">
+      <button onclick="editQtyPrompt('${i.id}',${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">
         (Click to edit) In Stock: ${i.qty || 0}
       </button>
     </div>
-    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>
-    ${i.traits.map(t => t.name ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}.${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>` : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
+    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>${i.traits.map(t => t.name ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}.${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>` : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
     
     <div class="mt-3 pt-3 border-t border-slate-800/80 flex gap-2">
       ${!i.traits[0].name ? `<button onclick="doTasteTest('${i.id}')" class="${btn2} text-xs flex-1"><i class="fa-solid fa-vial mr-1"></i> Taste Test</button>` : ''}
@@ -292,10 +335,10 @@ async function runForageD20(iid) {
 
     if (!pass) {
       await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: d20, d4_yield: 0 });
-      $('#roll_status').innerHTML = `<span class="text-red-400 font-bold">Rolled ${d20} + ${bonus} = ${total} (DC ${reqDc})</span><br><span class="text-xs text-slate-400">Search unsuccessful. No ingredients found.</span>`;
+      $('#roll_status').innerHTML = `<span class="text-red-400 font-bold">Rolled ${d20} +${bonus} = ${total} (DC${reqDc})</span><br><span class="text-xs text-slate-400">Search unsuccessful. No ingredients found.</span>`;
       $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn2} w-full mt-3">Back to Reagents</button>`;
     } else {
-      $('#roll_status').innerHTML = `<span class="text-emerald-400 font-bold">SUCCESS! Rolled ${d20} + ${bonus} = ${total} (DC ${reqDc})</span>`;
+      $('#roll_status').innerHTML = `<span class="text-emerald-400 font-bold">SUCCESS! Rolled ${d20} +${bonus} = ${total} (DC${reqDc})</span>`;
       $('#act_btns').innerHTML = `
         <div id="d4_box" class="my-4">
           <div id="d4_icon" class="text-4xl text-amber-400"><i class="fa-solid fa-dice-d4"></i></div>
@@ -344,46 +387,4 @@ function optionsView() {
     <div>
       <label class="text-xs text-slate-400">Foraging Modifier Skill</label>
       <div class="flex gap-2 mt-1">
-        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded-lg flex items-center gap-2 text-xs cursor-pointer"><input type="radio" name="f_skill" value="nature" ${skill==='nature'?'checked':''}> Nature / Int</label>
-        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded-lg flex items-center gap-2 text-xs cursor-pointer"><input type="radio" name="f_skill" value="survival" ${skill==='survival'?'checked':''}> Survival / Wis</label>
-      </div>
-    </div>
-    <div><label class="text-xs text-slate-400">Current Bonus Numerical Value (+Modifier)</label><input id="opt_bonus" type="number" class="${inp} mt-1" value="${bonus}"></div>
-    <button onclick="saveOptions()" class="${btn} w-full">Save Options</button>
-  </div>`;
-}
-
-async function saveOptions() {
-  const name = $('#opt_name').value.trim();
-  const skill = document.querySelector('input[name="f_skill"]:checked').value;
-  const bonus = parseInt($('#opt_bonus').value) || 0;
-  await sb.rpc('p_update_options', { uname: creds.u, pass: creds.p, new_name: name, f_skill: skill, f_bonus: bonus });
-  creds.u = name;
-  await playerRefresh();
-  alert('Options updated!');
-}
-
-function brewView() {
-  const opts = P.ingredients.filter(i => (i.qty || 0) > 0).map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${i.qty} in stock)</option>`).join('');
-  $('#pv').innerHTML = !opts ? `<p class="text-slate-500">You have no ingredients in stock. Ask your DM or go foraging!</p>` : `<div class="${card} space-y-3">
-    <div class="grid sm:grid-cols-2 gap-3"><div><label class="text-xs text-slate-400">Reagent #1</label><select id="i1" class="${inp}">${opts}</select></div>
-    <div><label class="text-xs text-slate-400">Reagent #2</label><select id="i2" class="${inp}">${opts}</select></div></div>
-    <div><label class="text-xs text-slate-400">Solvent</label><select id="sv" class="${inp}"><option value="1">Level 1: Impure Water</option><option value="2">Level 2: Pure Water</option><option value="3">Level 3: Pristine Water</option></select></div>
-    <button onclick="brew()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Brew Potion</button></div><div id="res" class="mt-4"></div>`;
-}
-
-async function brew() {
-  const sv = +$('#sv').value;
-  const { data, error } = await sb.rpc('p_brew', { uname: creds.u, pass: creds.p, ing1: $('#i1').value, ing2: $('#i2').value, solvent: sv, idx1: 0, idx2: 0 });
-  if (error) return fail(error);
-  
-  // Refresh to visually deduct quantities used in the brew station dropdowns immediately
-  await playerRefresh();
-  brewView();
-  
-  $('#res').innerHTML = data.ok ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Success! Brewed ${esc(data.trait)}. (1 unit deducted from both reagents)</div>`
-    : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">Mismatch! Produced Foul Sludge. (1 unit deducted from both reagents)</div>`;
-}
-</script>
-</body>
-</html>
+        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded
