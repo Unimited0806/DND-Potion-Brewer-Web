@@ -62,9 +62,9 @@ function loginView(tab) {
       <div class="flex gap-2"><button onclick="dmLogin()" class="${btn} flex-1">Sign in</button><button onclick="dmSignup()" class="${btn2} flex-1">Create DM account</button></div>`}
   </div>`);
 }
-async function dmLogin() { const { error } = await sb.auth.signInWithPassword({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : dmHome(); }
+async function dmLogin() { const { error } = await sb.auth.signInWithPassword({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : (creds = null, sessionStorage.removeItem('pc'), dmHome()); }
 async function dmSignup() { const { error } = await sb.auth.signUp({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : (alert('Account created. If asked, confirm your email, then sign in.')); }
-async function logout() { await sb.auth.signOut(); sessionStorage.removeItem('pc'); creds = null; $('#who').textContent = ''; loginView('player'); }
+async function logout() { if (!creds) await sb.auth.signOut(); sessionStorage.removeItem('pc'); creds = null; $('#who').textContent = ''; loginView('player'); }  // players log out without touching a DM session in the same browser
 
 // ================= DM SIDE =================
 async function dmHome() {
