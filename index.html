@@ -173,10 +173,29 @@ function recipeHtml(r, label) {
 }
 function drawPotions() {
   const q = ($('#psearch').value || '').trim().toLowerCase();
-  const list = POT.filter(p => !q || [p.e.name, p.trait, ...p.lv.map(l => p.e['l' + l.n])].join(' ').replace(/\*\*/g, '').toLowerCase().includes(q));
+  const list = POT.filter(p => {
+    if (!q) return true;
+    
+    // 1. Match Potion Name or Trait Name
+    const nameMatch = p.e.name.toLowerCase().includes(q) || p.trait.toLowerCase().includes(q);
+    
+    // 2. Match Effect Descriptions across Level 1, Level 2, and Level 3
+    const effectMatch = p.lv.some(l => {
+      const effectText = p.e['l' + l.n] || '';
+      return effectText.replace(/\*\*/g, '').toLowerCase().includes(q);
+    });
+
+    // 3. Match Ingredient Names in Recipes
+    const recipeMatch = p.lv.some(l => 
+      l.recipes.some(r => r.toLowerCase().includes(q))
+    );
+
+    return nameMatch || effectMatch || recipeMatch;
+  });
+
   $('#pcount').textContent = list.length + ' of ' + POT.length + ' potions';
   $('#plist').innerHTML = list.map(p => `<div class="${card}"><div class="font-semibold text-amber-200"><i class="fa-solid ${esc(p.e.icon)} mr-2"></i>${esc(p.e.name)} <span class="text-xs text-slate-500">${esc(p.trait)}</span></div>
-    ${p.lv.map(l => `<div class="mt-3"><div class="text-xs font-bold text-amber-400">LEVEL ${l.n} · ${POT_LV[l.n][0]} · ${POT_LV[l.n][1]}</div>
+    ${p.lv.map(l => `<div class="mt-3"><div class="text-xs font-bold text-amber-400">LEVEL ${l.n} · ${POT_LV[l.n][0]} ·${POT_LV[l.n][1]}</div>
       <p class="text-sm">${boldT(p.e['l' + l.n])}</p>${recipeHtml(l.recipes, POTDM ? 'Made with:' : 'You made it with:')}</div>`).join('')}</div>`).join('')
     || `<p class="text-slate-500">${POT.length ? 'No potions match your search.' : esc(POTEMPTY)}</p>`;
 }
