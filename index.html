@@ -185,7 +185,7 @@ function openCampaign(id) {
     render(`<div class="flex gap-2 mb-3">
         <button onclick="dmHome()" class="${btn2}"><i class="fa-solid fa-arrow-left"></i> All Campaigns</button>
         <button onclick="openCampaign('${esc(id)}')" class="${btn2}"><i class="fa-solid fa-rotate mr-1"></i> Refresh</button>
-      </div>
+      </div>${dmTabs('over')}
       <div class="flex justify-between items-end mb-3">
         <h2 class="text-xl text-amber-200">${esc(c.name)} Overview</h2>
         <div class="text-xs text-slate-400">Join Password: <strong class="text-amber-100">${esc(c.password)}</strong>
@@ -278,7 +278,7 @@ function playerView(tab) {
   window.ptab = tab;
   const t = (k, l) => `<button onclick="playerView('${k}')" class="${tab === k ? btn : btn2}">${l}</button>`;
   render(`<div class="flex items-center justify-between mb-5">
-    <div class="flex gap-2">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Potions')}</div>
+    <div class="flex gap-2">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Learned Potions')}</div>
     <div>${t('options', 'Options')}</div>
   </div><div id="pv"></div>`);
   ({ lib: libView, options: optionsView, pot: potView }[tab] || brewView)();
@@ -308,7 +308,7 @@ function drawPlayerLib() {
       <span><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</span>
       <button onclick="editQtyPrompt('${i.id}', ${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">(Click to edit) In Stock: ${i.qty || 0}</button>
     </div>
-    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>
+    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)} · ${fmtCp(ingCp(i))} each</div>
     ${i.traits.map(t => t.name
       ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}. ${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>`
       : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
@@ -317,31 +317,6 @@ function drawPlayerLib() {
       <button onclick="forageInteractive('${i.id}')" class="${btn} text-xs flex-1"><i class="fa-solid fa-seedling mr-1"></i> Forage For More</button>
     </div>
   </div>`).join('');
-}
-
-function doTasteTest(iid) {
-  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
-    <h3 class="text-lg text-amber-200 font-bold">Taste Testing Reagent</h3>
-    <p class="text-xs text-slate-400">Notice: This roll ignores all Constitution modifiers and bonuses. Standard DC 10.<br><strong>1 unit will be consumed.</strong></p>
-    <div id="dice_anim" class="text-4xl text-amber-400 py-4"><i class="fa-solid fa-dice-d20"></i></div>
-    <button id="taste_btn" onclick="rollTaste('${iid}')" class="${btn}">Roll Taste Check</button>
-  </div>`);
-}
-
-function rollTaste(iid) {
-  $('#dice_anim').classList.add('animate-dice');
-  $('#taste_btn').disabled = true;                       // prevent double rolls
-  setTimeout(() => guard(async () => {
-    const rawRoll = d(20);
-    const data = await rpc('p_taste_test', { ...pc(), iid, raw_d20_roll: rawRoll });
-    await loadState();                                   // refresh stock without redrawing the screen
-    render(`<div class="${card} max-w-md mx-auto text-center space-y-3">
-      <h3 class="text-xl ${data.success ? 'text-emerald-300' : 'text-red-400'} font-bold">Rolled ${rawRoll} vs DC 10</h3>
-      <p class="text-sm">${data.success ? `Success! Learned Trait 1: <strong class="text-amber-300">${esc(data.trait)}</strong>` : `Failed Save! ${esc(data.effect)}`}</p>
-      <p class="text-xs text-slate-400 italic">1 unit consumed.</p>
-      ${backBtn("playerView('lib')", 'Back to Reagents')}
-    </div>`);
-  }), 600);
 }
 
 function openAddReagentModal() {
@@ -367,7 +342,7 @@ function filterModalReagents() {
     : list.map(i => `<div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
       <div>
         <div class="font-bold text-amber-200 text-sm"><i class="fa-solid ${esc(i.icon)} mr-1"></i>${esc(i.name)}</div>
-        <div class="text-[10px] text-slate-400">${esc(i.biome)} · Base Value: ${i.value || 1}gp</div>
+        <div class="text-[10px] text-slate-400">${esc(i.biome)} · Value: ${fmtCp(ingCp(i))}</div>
       </div>
       <button onclick="promptAcquireChoice('${i.id}')" class="${btn} text-xs">Acquire</button>
     </div>`).join('');
@@ -489,33 +464,202 @@ function saveOptions() {
   });
 }
 
-// Placeholder: playerView referenced potView but it was never defined
-function potView() {
-  $('#pv').innerHTML = `<div class="${card} text-sm text-slate-400">Potion storage is not built yet.</div>`;
+// ================= VALUES / TASTE / WATER / CRAFTING / POTIONS =================
+const UNITS = { pp: 1000, gp: 100, sp: 10, cp: 1 };
+const WATER = { 1: 'Impure', 2: 'Pure', 3: 'Pristine' };
+const fmtCp = cp => {
+  if (cp == null) return '—';
+  cp = Math.round(cp);
+  if (!cp) return '0 cp';
+  const parts = [[Math.floor(cp / 1000), 'pp'], [Math.floor(cp % 1000 / 100), 'gp'], [Math.floor(cp % 100 / 10), 'sp'], [cp % 10, 'cp']];
+  return parts.filter(x => x[0]).map(x => x.join(' ')).join(' ');
+};
+const ingCp = i => i.value_cp ?? Math.round((Number(i.value) || 1) * 100);
+
+function doTasteTest(iid) {
+  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
+    <h3 class="text-lg text-amber-200 font-bold">Taste Testing Reagent</h3>
+    <p class="text-xs text-slate-400">d20, no modifiers. <strong>5+</strong>: you learn Trait 1. <strong>2–4</strong>: you learn it but suffer the reagent's bad effect. <strong>1</strong>: you suffer the effect and learn nothing.<br><strong>1 unit will be consumed.</strong></p>
+    <div id="dice_anim" class="text-4xl text-amber-400 py-4"><i class="fa-solid fa-dice-d20"></i></div>
+    <button id="taste_btn" onclick="rollTaste('${iid}')" class="${btn}">Roll Taste Check</button>
+  </div>`);
 }
 
-function brewView() {
-  const opts = P.ingredients.filter(i => (i.qty || 0) > 0).map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${i.qty} in stock)</option>`).join('');
-  $('#pv').innerHTML = !opts
-    ? `<p class="text-slate-500">You have no ingredients in stock. Ask your DM or go foraging!</p>`
-    : `<div class="${card} space-y-3">
-    <div class="grid sm:grid-cols-2 gap-3">
-      <div><label class="text-xs text-slate-400">Reagent #1</label><select id="i1" class="${inp}">${opts}</select></div>
-      <div><label class="text-xs text-slate-400">Reagent #2</label><select id="i2" class="${inp}">${opts}</select></div>
-    </div>
-    <div><label class="text-xs text-slate-400">Solvent</label><select id="sv" class="${inp}"><option value="1">Level 1: Impure Water</option><option value="2">Level 2: Pure Water</option><option value="3">Level 3: Pristine Water</option></select></div>
-    <button onclick="brew()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Brew Potion</button></div><div id="res" class="mt-4"></div>`;
+function rollTaste(iid) {
+  $('#dice_anim').classList.add('animate-dice');
+  $('#taste_btn').disabled = true;
+  setTimeout(() => guard(async () => {
+    const r = await rpc('p_taste', { ...pc(), iid });      // the server rolls the die
+    await loadState();
+    const tone = r.safe ? 'text-emerald-300' : r.learned ? 'text-amber-300' : 'text-red-400';
+    const msg = r.safe ? `Success! Learned Trait 1: <strong class="text-amber-300">${esc(r.trait)}</strong>`
+      : r.learned ? `Rough going, but you learned Trait 1: <strong class="text-amber-300">${esc(r.trait)}</strong><br>You suffer: ${esc(r.effect)}`
+      : `Critical failure! You learn nothing.<br>You suffer: ${esc(r.effect)}`;
+    render(`<div class="${card} max-w-md mx-auto text-center space-y-3">
+      <h3 class="text-xl ${tone} font-bold">Rolled ${r.roll}</h3>
+      <p class="text-sm">${msg}</p>
+      <p class="text-xs text-slate-400 italic">1 unit consumed.</p>
+      ${backBtn("playerView('lib')", 'Back to Reagents')}
+    </div>`);
+  }), 600);
 }
 
-function brew() {
-  const args = { ...pc(), ing1: $('#i1').value, ing2: $('#i2').value, solvent: +$('#sv').value, idx1: 0, idx2: 0 };
+// ---------- water ----------
+function waterView() {
+  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
+    <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-droplet mr-2"></i>Collect Water</h3>
+    <p class="text-xs text-slate-400">Choose the water you are looking for, then it rolls 1d4. A 3 or 4 finds 2 units, otherwise 1. A 4 also turns up 1 unit of the next grade up.</p>
+    <div class="grid grid-cols-3 gap-2">${[1, 2, 3].map(l => `<button onclick="rollWater(${l})" class="${btn2} py-3 text-xs">${WATER[l]}<br>(Level ${l})</button>`).join('')}</div>
+    <div id="water_res" class="text-sm"></div>
+    <button onclick="playerView('brew')" class="${btn2} w-full">Back to Brewing Station</button>
+  </div>`);
+}
+
+function rollWater(l) {
   return guard(async () => {
-    const data = await rpc('p_brew', args);
+    const r = await rpc('p_forage_water', { ...pc(), lvl: l });
+    await loadState();
+    $('#water_res').innerHTML = `<span class="text-emerald-300 font-bold">Rolled ${r.roll}: found ${r.qty} ${WATER[r.level]} water${r.bonus_qty ? ` and ${r.bonus_qty} ${WATER[r.bonus_level]} water` : ''}!</span>`;
+  });
+}
+
+// ---------- crafting: solvent -> reagents -> craft ----------
+function brewView() {
+  const w = P.water || {};
+  const have = [1, 2, 3].filter(l => (w[l] || 0) > 0);
+  const reag = P.ingredients.filter(i => (i.qty || 0) > 0);
+  const opts = reag.map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${i.qty} in stock)</option>`).join('');
+  const stock = [1, 2, 3].map(l => `<span class="mr-3">${WATER[l]}: <strong class="text-amber-200">${w[l] || 0}</strong></span>`).join('');
+  const lbl = 'text-xs text-slate-400';
+  const body = !have.length ? `<p class="text-sm text-slate-500">You have no water to brew with. Collect some first.</p>`
+    : reag.length < 2 ? `<p class="text-sm text-slate-500">You need at least two different reagents in stock.</p>`
+    : `<div><label class="${lbl}">1. Solvent</label><select id="sv" class="${inp}" onchange="craftOpts()">${have.map(l => `<option value="${l}">Level ${l}: ${WATER[l]} Water (${w[l]})</option>`).join('')}</select></div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="${lbl}">2. Reagent #1</label><select id="i1" class="${inp}">${opts}</select></div>
+        <div><label class="${lbl}">2. Reagent #2</label><select id="i2" class="${inp}">${opts}</select></div>
+      </div>
+      <div id="craft_extra" class="space-y-3"></div>
+      <button onclick="craft()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Craft</button>`;
+  $('#pv').innerHTML = `<div class="${card} space-y-3">
+    <div class="flex flex-wrap justify-between items-center gap-2"><div class="text-xs text-slate-400">Water: ${stock}</div>
+      <button onclick="waterView()" class="${btn2} text-xs"><i class="fa-solid fa-droplet mr-1"></i> Collect Water</button></div>
+    ${body}</div><div id="res" class="mt-4"></div>`;
+  if (have.length && reag.length > 1) craftOpts();
+}
+
+const slotChoices = (sv, tier) => P.master && sv === 3 ? [0, 1, 2, 3] : tier === 3 ? [2, 3] : [tier - 1];
+
+function craftOpts() {
+  const sv = +$('#sv').value;
+  $('#craft_extra').innerHTML = `<div><label class="text-xs text-slate-400">3. Potion grade (a stronger solvent can make weaker potions)</label>
+    <select id="tier" class="${inp}" onchange="slotOpts()">${[...Array(sv).keys()].map(k => `<option value="${k + 1}" ${k + 1 === sv ? 'selected' : ''}>Grade ${k + 1}${k + 1 < sv ? ' (lower grade)' : ''}</option>`).join('')}</select></div>
+    <div id="slot_box"></div>`;
+  slotOpts();
+}
+
+function slotOpts() {
+  const ch = slotChoices(+$('#sv').value, +$('#tier').value);
+  $('#slot_box').innerHTML = ch.length === 1 ? '' : `<div class="grid sm:grid-cols-2 gap-3">${['s1', 's2'].map((id, n) =>
+    `<div><label class="text-xs text-slate-400">Reagent #${n + 1} trait slot</label><select id="${id}" class="${inp}">${ch.map(x => `<option value="${x}">Trait ${x + 1}</option>`).join('')}</select></div>`).join('')}</div>`;
+}
+
+function craft() {
+  const sv = +$('#sv').value, tier = +$('#tier').value, i1 = $('#i1').value, i2 = $('#i2').value;
+  if (i1 === i2) return alert('Choose two different reagents.');
+  const ch = slotChoices(sv, tier);
+  const idx = id => ch.length === 1 ? ch[0] : +$('#' + id).value;
+  const args = { ...pc(), solvent: sv, ing1: i1, ing2: i2, tier, idx1: idx('s1'), idx2: idx('s2') };
+  return guard(async () => {
+    const r = await rpc('p_craft', args);
     await loadState();
     brewView();
-    $('#res').innerHTML = data.ok
-      ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Success! Brewed ${esc(data.trait)}. (1 unit deducted from both reagents)</div>`
-      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">Mismatch! Produced Foul Sludge. (1 unit deducted from both reagents)</div>`;
+    $('#res').innerHTML = r.ok
+      ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Potion ${r.new ? 'learned' : 'recipe already known'}: <strong>${esc(r.trait)}</strong> (Grade ${r.level}). Find it in Learned Potions. 1 water and 1 of each reagent used.</div>`
+      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">The traits didn't match. Foul Sludge (1d4 acid damage). 1 water and 1 of each reagent used.</div>`;
+  });
+}
+
+// ---------- learned potions ----------
+function potView() {
+  const cpOf = id => { const i = (P.all_ingredients || []).find(x => x.id === id); return i ? ingCp(i) : 0; };
+  const price = m => (P.potion_cp || {})[`${m.trait}|${m.level}`] ?? (cpOf(m.ia_id) + cpOf(m.ib_id) + 200);   // materials + 2 gp
+  const fx = (t, lv) => {
+    const e = (P.effects || {})[t];
+    if (!e) return '';
+    const v = (e.levels && e.levels[lv - 1]) ?? e['level' + lv] ?? e['l' + lv] ?? e[lv];
+    return typeof v === 'string' ? v : (v && (v.desc || v.description || v.effect)) || '';
+  };
+  const made = P.made || [];
+  $('#pv').innerHTML = !made.length
+    ? `<div class="${card} text-sm text-slate-400">You haven't learned any potions yet. Head to the Brewing Station.</div>`
+    : `<div class="grid md:grid-cols-2 gap-3">${made.map(m => {
+        const e = (P.effects || {})[m.trait], nm = e && (e.potion || e.name);
+        return `<div class="${card}">
+          <div class="font-semibold text-amber-200 flex justify-between"><span>${esc(m.trait)}${nm ? ` <span class="text-slate-400 text-xs">(${esc(nm)})</span>` : ''}</span><span class="text-xs text-amber-300">Grade ${m.level}</span></div>
+          <div class="text-xs text-slate-300 mt-1">${esc(fx(m.trait, m.level))}</div>
+          <div class="text-xs text-slate-400 mt-2">Brewed from ${esc(m.a)} + ${esc(m.b)}</div>
+          <div class="text-xs mt-1">Value: <strong class="text-amber-200">${fmtCp(price(m))}</strong></div></div>`;
+      }).join('')}</div>`;
+}
+
+// ================= DM: ITEMS & VALUES =================
+let ITEMS = null, itemKind = 'ingredient', itemQ = '', shown = [];
+const dmTabs = a => `<div class="flex gap-2 mb-4"><button onclick="openCampaign('${dm.cid}')" class="${a === 'over' ? btn : btn2}">Overview</button><button onclick="dmItemsView()" class="${a === 'items' ? btn : btn2}">Items &amp; Values</button></div>`;
+const itemKey = x => itemKind === 'ingredient' ? String(x.id) : `${x.trait}|${x.level}`;
+
+function dmItemsView() {
+  render('<p class="text-sm text-slate-400">Loading items…</p>');
+  return guard(async () => { ITEMS = await rpc('dm_items', { cid: dm.cid }); drawItems(); });
+}
+
+function setKind(k) { itemKind = k; drawItems(); }
+
+function drawItems() {
+  const kb = (k, l) => `<button onclick="setKind('${k}')" class="${itemKind === k ? btn : btn2}">${l}</button>`;
+  render(`<div class="flex gap-2 mb-3"><button onclick="dmHome()" class="${btn2}"><i class="fa-solid fa-arrow-left"></i> All Campaigns</button></div>${dmTabs('items')}
+    <div class="flex flex-wrap gap-2 mb-2">${kb('ingredient', 'Ingredients')}${kb('potion', 'Potions')}
+      <input id="item_q" class="${inp} max-w-xs" placeholder="Search..." value="${esc(itemQ)}" oninput="itemQ=this.value;filterItems()"></div>
+    <p class="text-xs text-slate-400 mb-3">${itemKind === 'ingredient' ? 'Players in this campaign see the value you set for each reagent.' : 'Potions without a price are worth their two reagents + 2 gp. Set a price to override it for that potion grade.'}</p>
+    <div id="item_list" class="space-y-2"></div>`);
+  filterItems();
+}
+
+function filterItems() {
+  const q = itemQ.toLowerCase();
+  const src = itemKind === 'ingredient' ? ITEMS.ingredients : ITEMS.potions;
+  shown = src.filter(x => !q || `${x.name || x.trait} ${x.biome || ''} ${x.rarity || ''}`.toLowerCase().includes(q));
+  $('#item_list').innerHTML = !shown.length ? '<p class="text-xs text-slate-500">Nothing matches.</p>' : shown.map((x, n) => `
+    <div class="p-3 bg-slate-900/60 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <div class="font-bold text-amber-200 text-sm">${itemKind === 'ingredient' ? esc(x.name) : `${esc(x.trait)} — Grade ${x.level}`}</div>
+        <div class="text-[10px] text-slate-400">${itemKind === 'ingredient' ? `${esc(x.rarity)} · ${esc(x.biome)}` : 'Potion'} · Now: <strong class="text-amber-100">${x.cp == null ? 'Auto (materials + 2 gp)' : fmtCp(x.cp)}</strong>${x.custom ? ' (custom)' : ''}</div>
+      </div>
+      <div class="flex items-center gap-1">
+        <input id="amt_${n}" type="number" min="0" step="any" class="${inp} !w-20" placeholder="Value">
+        <select id="unit_${n}" class="${inp} !w-auto"><option value="pp">Platinum</option><option value="gp" selected>Gold</option><option value="sp">Silver</option><option value="cp">Copper</option></select>
+        <button onclick="saveItem(${n})" class="${btn} text-xs">Save</button>
+        ${x.custom ? `<button onclick="resetItem(${n})" class="${btn2} text-xs">Reset</button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function saveItem(n) {
+  const x = shown[n], amt = parseFloat($('#amt_' + n).value);
+  if (isNaN(amt) || amt < 0) return alert('Enter a value of 0 or more.');
+  const copper = Math.round(amt * UNITS[$('#unit_' + n).value]);
+  return guard(async () => {
+    await rpc('dm_set_value', { cid: dm.cid, item_kind: itemKind, item_key: itemKey(x), copper });
+    x.cp = copper; x.custom = true;
+    filterItems();
+  });
+}
+
+function resetItem(n) {
+  const x = shown[n];
+  return guard(async () => {
+    await rpc('dm_reset_value', { cid: dm.cid, item_kind: itemKind, item_key: itemKey(x) });
+    x.cp = itemKind === 'ingredient' ? x.base_cp : null; x.custom = false;
+    filterItems();
   });
 }
 
