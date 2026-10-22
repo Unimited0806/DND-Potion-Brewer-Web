@@ -36,8 +36,8 @@ const inp = 'bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm w
 const card = 'bg-slate-900/60 border border-slate-800 rounded-2xl p-4';
 const render = h => { const el = $('#app'); if (el) el.innerHTML = h; };
 const fail = e => alert((e && e.message) || e);
-const guard = f => Promise.resolve().then(f).catch(fail);           // run an async action, alert on error
-const d = n => Math.floor(Math.random() * n) + 1;                   // roll a die
+const guard = f => Promise.resolve().then(f).catch(fail);
+const d = n => Math.floor(Math.random() * n) + 1;
 const withTimeout = (p, ms = 10000) => Promise.race([p, new Promise((_, rej) =>
   setTimeout(() => rej(new Error('Request timed out. Is the Supabase project paused?')), ms))]);
 const rpc = async (fn, args) => { const { data, error } = await withTimeout(sb.rpc(fn, args)); if (error) throw error; return data; };
@@ -52,7 +52,6 @@ const backBtn = (fn, label) => `<button onclick="${fn}" class="${btn} w-full mt-
 
 let sb, P = null, creds = null, dm = {};
 
-// Any uncaught error is shown on screen instead of leaving a blank page
 function showFatal(m) {
   render(`<div class="${card} max-w-md mx-auto text-center space-y-3">
     <p class="text-red-400 text-sm">Something broke: ${esc(m)}</p>
@@ -66,7 +65,7 @@ async function boot() {
   try {
     const { data } = await withTimeout(sb.auth.getSession());
     if (data.session) {
-      const { error } = await withTimeout(sb.auth.getUser());   // make sure the session is still valid
+      const { error } = await withTimeout(sb.auth.getUser());
       if (!error) return dmHome();
       await sb.auth.signOut();
     }
@@ -208,7 +207,7 @@ function openCampaign(id) {
         </div>
         <div class="${card} space-y-2 max-h-[400px] overflow-y-auto">
           <h3 class="text-sm font-bold text-amber-300">Activity Log</h3>
-          ${errL ? panelErr(errL) : (logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span> ${esc(l.details)}</div>`).join('')
+          ${errL ? panelErr(errL) : (logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span>${esc(l.details)}</div>`).join('')
             : '<p class="text-xs text-slate-500">No logs yet.</p>'}
         </div>
       </div>`);
@@ -249,7 +248,6 @@ function playerRequest() {
   });
 }
 
-// Loads state into P without touching the screen (returns false on bad login)
 async function loadState(fromLogin) {
   const c = creds;
   const data = await rpc('p_state', pc());
@@ -277,23 +275,65 @@ async function playerRefresh(fromLogin) {
 function playerView(tab) {
   window.ptab = tab;
   const t = (k, l) => `<button onclick="playerView('${k}')" class="${tab === k ? btn : btn2}">${l}</button>`;
-  render(`<div class="flex items-center justify-between mb-5">
-    <div class="flex gap-2">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Learned Potions')}</div>
+  render(`<div class="flex items-center justify-between mb-5 flex-wrap gap-2">
+    <div class="flex gap-2 flex-wrap">${t('brew', 'Brewing Station')}${t('lib', 'Reagents & Water')}${t('store', 'Potion Storage')}${t('pot', 'Learned Recipes')}</div>
     <div>${t('options', 'Options')}</div>
   </div><div id="pv"></div>`);
-  ({ lib: libView, options: optionsView, pot: potView }[tab] || brewView)();
+  ({ lib: libView, options: optionsView, pot: potView, store: storeView }[tab] || brewView)();
 }
 
 function libView() {
   const biomes = [...new Set(P.ingredients.map(i => i.biome).filter(Boolean))];
+  const w = P.water || {};
   $('#pv').innerHTML = `
+    <div class="mb-6 ${card} border-amber-500/30">
+      <h3 class="text-sm font-bold text-amber-200 mb-3"><i class="fa-solid fa-droplet mr-2 text-amber-400"></i>Water Inventory</h3>
+      <div class="grid sm:grid-cols-3 gap-3">
+        ${[1, 2, 3].map(l => `
+          <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
+            <div>
+              <div class="text-xs text-slate-400">Level ${l}</div>
+              <div class="font-bold text-amber-100">${WATER[l]} Water</div>
+              <div class="text-xs text-amber-300 mt-1">In Stock: ${w[l] || 0}</div>
+            </div>
+            <button onclick="waterForageModal(${l})" class="${btn} text-xs"><i class="fa-solid fa-magnifying-glass mr-1"></i> Forage</button>
+          </div>`).join('')}
+      </div>
+    </div>
     <div class="mb-4 flex flex-wrap gap-2 justify-between items-center bg-slate-900/80 p-3 rounded-xl border border-slate-800">
       <select id="p_bio" class="${inp} max-w-xs" onchange="drawPlayerLib()"><option value="">All Biomes</option>${biomes.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
-      <button onclick="openAddReagentModal()" class="${btn}"><i class="fa-solid fa-plus-circle mr-1"></i> Click here to add more</button>
+      <button onclick="openAddReagentModal()" class="${btn}"><i class="fa-solid fa-plus-circle mr-1"></i> Add Reagents</button>
     </div>
     <div id="p_lib_list" class="grid md:grid-cols-2 gap-3"></div>
     <div id="add_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>`;
   drawPlayerLib();
+}
+
+function waterForageModal(lvl) {
+  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
+    <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-droplet mr-2"></i>Foraging ${WATER[lvl]} Water</h3>
+    <p class="text-xs text-slate-400">Roll 1d4 to find quantity (1 or 2). On a 4, you also find 1 unit of the next grade up!</p>
+    <div id="dice_box" class="py-6">
+      <div id="d4_water_icon" class="text-5xl text-amber-400"><i class="fa-solid fa-dice-d4"></i></div>
+      <div id="roll_water_status" class="text-sm font-bold mt-2 text-slate-300">Ready to roll...</div>
+    </div>
+    <div id="water_act_btns">
+      <button onclick="runWaterForage(${lvl})" class="${btn} w-full"><i class="fa-solid fa-dice mr-1"></i> Roll 1d4 Water Search</button>
+    </div>
+  </div>`);
+}
+
+function runWaterForage(lvl) {
+  $('#d4_water_icon').classList.add('animate-dice');
+  $('#roll_water_status').textContent = 'Gathering water sources...';
+  $('#water_act_btns').innerHTML = '';
+  setTimeout(() => guard(async () => {
+    const r = await rpc('p_forage_water', { ...pc(), lvl });
+    await loadState();
+    $('#d4_water_icon').classList.remove('animate-dice');
+    $('#roll_water_status').innerHTML = `<span class="text-emerald-300 font-bold">Rolled ${r.roll}! Found +${r.qty} ${WATER[r.level]} water${r.bonus_qty ? ` and +${r.bonus_qty}${WATER[r.bonus_level]} water!` : ''}</span>`;
+    $('#water_act_btns').innerHTML = backBtn("playerView('lib')", 'Back to Reagents & Water');
+  }), 700);
 }
 
 function drawPlayerLib() {
@@ -306,11 +346,11 @@ function drawPlayerLib() {
   $('#p_lib_list').innerHTML = filtered.map(i => `<div class="${card} relative">
     <div class="font-semibold text-amber-200 flex justify-between items-start">
       <span><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</span>
-      <button onclick="editQtyPrompt('${i.id}', ${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">(Click to edit) In Stock: ${i.qty || 0}</button>
+      <button onclick="editQtyPrompt('${i.id}', ${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">In Stock: ${i.qty || 0}</button>
     </div>
     <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)} · ${fmtCp(ingCp(i))} each</div>
     ${i.traits.map(t => t.name
-      ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}. ${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>`
+      ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}.${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>`
       : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
     <div class="mt-3 pt-3 border-t border-slate-800/80 flex gap-2">
       ${!i.traits[0].name ? `<button onclick="doTasteTest('${i.id}')" class="${btn2} text-xs flex-1"><i class="fa-solid fa-vial mr-1"></i> Taste Test</button>` : ''}
@@ -348,7 +388,6 @@ function filterModalReagents() {
     </div>`).join('');
 }
 
-// Takes only the id (names with apostrophes used to break the inline onclick)
 function promptAcquireChoice(iid) {
   $('#add_modal').classList.add('hidden');
   render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
@@ -393,10 +432,9 @@ function runForageD20(iid) {
   $('#roll_status').textContent = 'Searching through foliage...';
   $('#act_btns').innerHTML = '';
   setTimeout(() => guard(async () => {
-    $('#d20_icon').classList.remove('animate-dice');
     const roll = d(20), bonus = P.foraging_bonus || 0, total = roll + bonus, dc = forageDC(ingById(iid));
     if (total < dc) {
-      await rpc('p_forage_harvest', { ...pc(), iid, d20_roll: roll, d4_yield: 0 });   // logs the failed search
+      await rpc('p_forage_harvest', { ...pc(), iid, d20_roll: roll, d4_yield: 0 });
       $('#roll_status').innerHTML = `<span class="text-red-400 font-bold">Rolled ${roll} + ${bonus} = ${total} (DC ${dc})</span><br><span class="text-xs text-slate-400">Search unsuccessful. No ingredients found.</span>`;
       $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn2} w-full mt-3">Back to Reagents</button>`;
     } else {
@@ -418,7 +456,7 @@ function runForageD4(iid, originalD20) {
   setTimeout(() => guard(async () => {
     const d4 = d(4);
     await rpc('p_forage_harvest', { ...pc(), iid, d20_roll: originalD20, d4_yield: d4 });
-    await loadState();     // was playerRefresh(), which redrew the library and erased this screen before the result showed
+    await loadState();
     $('#d4_icon').classList.remove('animate-dice');
     $('#d4_status').innerHTML = `<span class="text-emerald-300 font-bold text-base">Harvested +${d4} units!</span>`;
     $('#act_btns').innerHTML = backBtn("playerView('lib')", 'Back to Reagents');
@@ -458,13 +496,13 @@ function saveOptions() {
   const bonus = parseInt($('#opt_bonus').value) || 0;
   return guard(async () => {
     await rpc('p_update_options', { ...pc(), new_name: name, f_skill: skill, f_bonus: bonus });
-    creds.u = name;        // only switch the stored name once the server accepted it
+    creds.u = name;
     await playerRefresh();
     alert('Options updated!');
   });
 }
 
-// ================= VALUES / TASTE / WATER / CRAFTING / POTIONS =================
+// ================= VALUES / TASTE / CRAFTING / POTIONS =================
 const UNITS = { pp: 1000, gp: 100, sp: 10, cp: 1 };
 const WATER = { 1: 'Impure', 2: 'Pure', 3: 'Pristine' };
 const fmtCp = cp => {
@@ -489,7 +527,7 @@ function rollTaste(iid) {
   $('#dice_anim').classList.add('animate-dice');
   $('#taste_btn').disabled = true;
   setTimeout(() => guard(async () => {
-    const r = await rpc('p_taste', { ...pc(), iid });      // the server rolls the die
+    const r = await rpc('p_taste', { ...pc(), iid });
     await loadState();
     const tone = r.safe ? 'text-emerald-300' : r.learned ? 'text-amber-300' : 'text-red-400';
     const msg = r.safe ? `Success! Learned Trait 1: <strong class="text-amber-300">${esc(r.trait)}</strong>`
@@ -504,26 +542,7 @@ function rollTaste(iid) {
   }), 600);
 }
 
-// ---------- water ----------
-function waterView() {
-  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
-    <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-droplet mr-2"></i>Collect Water</h3>
-    <p class="text-xs text-slate-400">Choose the water you are looking for, then it rolls 1d4. A 3 or 4 finds 2 units, otherwise 1. A 4 also turns up 1 unit of the next grade up.</p>
-    <div class="grid grid-cols-3 gap-2">${[1, 2, 3].map(l => `<button onclick="rollWater(${l})" class="${btn2} py-3 text-xs">${WATER[l]}<br>(Level ${l})</button>`).join('')}</div>
-    <div id="water_res" class="text-sm"></div>
-    <button onclick="playerView('brew')" class="${btn2} w-full">Back to Brewing Station</button>
-  </div>`);
-}
-
-function rollWater(l) {
-  return guard(async () => {
-    const r = await rpc('p_forage_water', { ...pc(), lvl: l });
-    await loadState();
-    $('#water_res').innerHTML = `<span class="text-emerald-300 font-bold">Rolled ${r.roll}: found ${r.qty} ${WATER[r.level]} water${r.bonus_qty ? ` and ${r.bonus_qty} ${WATER[r.bonus_level]} water` : ''}!</span>`;
-  });
-}
-
-// ---------- crafting: solvent -> reagents -> craft ----------
+// ---------- brewing ----------
 function brewView() {
   const w = P.water || {};
   const have = [1, 2, 3].filter(l => (w[l] || 0) > 0);
@@ -531,7 +550,7 @@ function brewView() {
   const opts = reag.map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${i.qty} in stock)</option>`).join('');
   const stock = [1, 2, 3].map(l => `<span class="mr-3">${WATER[l]}: <strong class="text-amber-200">${w[l] || 0}</strong></span>`).join('');
   const lbl = 'text-xs text-slate-400';
-  const body = !have.length ? `<p class="text-sm text-slate-500">You have no water to brew with. Collect some first.</p>`
+  const body = !have.length ? `<p class="text-sm text-slate-500">You have no water to brew with. Collect some in the Reagents & Water tab.</p>`
     : reag.length < 2 ? `<p class="text-sm text-slate-500">You need at least two different reagents in stock.</p>`
     : `<div><label class="${lbl}">1. Solvent</label><select id="sv" class="${inp}" onchange="craftOpts()">${have.map(l => `<option value="${l}">Level ${l}: ${WATER[l]} Water (${w[l]})</option>`).join('')}</select></div>
       <div class="grid sm:grid-cols-2 gap-3">
@@ -539,10 +558,10 @@ function brewView() {
         <div><label class="${lbl}">2. Reagent #2</label><select id="i2" class="${inp}">${opts}</select></div>
       </div>
       <div id="craft_extra" class="space-y-3"></div>
-      <button onclick="craft()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Craft</button>`;
+      <button onclick="craft()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Craft Potion</button>`;
   $('#pv').innerHTML = `<div class="${card} space-y-3">
-    <div class="flex flex-wrap justify-between items-center gap-2"><div class="text-xs text-slate-400">Water: ${stock}</div>
-      <button onclick="waterView()" class="${btn2} text-xs"><i class="fa-solid fa-droplet mr-1"></i> Collect Water</button></div>
+    <div class="flex flex-wrap justify-between items-center gap-2"><div class="text-xs text-slate-400">Water Stock: ${stock}</div>
+    <button onclick="playerView('lib')" class="${btn2} text-xs"><i class="fa-solid fa-droplet mr-1"></i> Water Management</button></div>
     ${body}</div><div id="res" class="mt-4"></div>`;
   if (have.length && reag.length > 1) craftOpts();
 }
@@ -574,30 +593,90 @@ function craft() {
     await loadState();
     brewView();
     $('#res').innerHTML = r.ok
-      ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Potion ${r.new ? 'learned' : 'recipe already known'}: <strong>${esc(r.trait)}</strong> (Grade ${r.level}). Find it in Learned Potions. 1 water and 1 of each reagent used.</div>`
+      ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Potion ${r.new ? 'learned' : 'recipe already known'}: <strong>${esc(r.trait)}</strong> (Grade ${r.level}). Added to Potion Storage! 1 water and 1 of each reagent used.</div>`
       : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">The traits didn't match. Foul Sludge (1d4 acid damage). 1 water and 1 of each reagent used.</div>`;
   });
 }
 
-// ---------- learned potions ----------
-function potView() {
+// ---------- potion storage tab ----------
+function storeView() {
+  const made = P.made || [];
+  const stock = P.potions_storage || {};
   const cpOf = id => { const i = (P.all_ingredients || []).find(x => x.id === id); return i ? ingCp(i) : 0; };
-  const price = m => (P.potion_cp || {})[`${m.trait}|${m.level}`] ?? (cpOf(m.ia_id) + cpOf(m.ib_id) + 200);   // materials + 2 gp
+  const price = m => (P.potion_cp || {})[`${m.trait}|${m.level}`] ?? (cpOf(m.ia_id) + cpOf(m.ib_id) + 200);
   const fx = (t, lv) => {
     const e = (P.effects || {})[t];
     if (!e) return '';
     const v = (e.levels && e.levels[lv - 1]) ?? e['level' + lv] ?? e['l' + lv] ?? e[lv];
     return typeof v === 'string' ? v : (v && (v.desc || v.description || v.effect)) || '';
   };
-  const made = P.made || [];
+
   $('#pv').innerHTML = !made.length
-    ? `<div class="${card} text-sm text-slate-400">You haven't learned any potions yet. Head to the Brewing Station.</div>`
+    ? `<div class="${card} text-sm text-slate-400">No potions crafted yet. Brew a potion at the Brewing Station to add it here.</div>`
+    : `<div class="grid md:grid-cols-2 gap-4">${made.map(m => {
+        const key = `${m.trait}\vert{}${m.level}`;
+        const count = stock[key] || 0;
+        const e = (P.effects || {})[m.trait], nm = e && (e.potion || e.name);
+        return `<div class="${card} flex flex-col justify-between">
+          <div>
+            <div class="font-semibold text-amber-200 flex justify-between items-center">
+              <span>${esc(m.trait)}${nm ? ` <span class="text-slate-400 text-xs">(${esc(nm)})</span>` : ''}</span>
+              <span class="text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30">Grade ${m.level}</span>
+            </div>
+            <div class="text-xs text-slate-300 mt-1">${esc(fx(m.trait, m.level))}</div>
+            <div class="text-xs text-slate-400 mt-2 pt-2 border-t border-slate-800">
+              <div><strong>Crafted From:</strong> ${esc(m.a)} +${esc(m.b)}</div>
+              <div><strong>Value:</strong> <span class="text-amber-200">${fmtCp(price(m))}</span></div>
+              <div class="mt-1 text-emerald-400 font-semibold">In Storage: ${count}</div>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1">
+              <button onclick="updatePotionQty('${m.trait}', ${m.level}, -1)" class="${btn2} text-xs px-2 py-1">-</button>
+              <span class="text-xs font-bold px-2">${count}</span>
+              <button onclick="updatePotionQty('${m.trait}', ${m.level}, 1)" class="${btn2} text-xs px-2 py-1">+</button>
+            </div>
+            <button onclick="quickCraftPotion('${m.ia_id}', '${m.ib_id}', ${m.level})" class="${btn} text-xs flex-1"><i class="fa-solid fa-mortar-pestle mr-1"></i> Quick Craft</button>
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+}
+
+function updatePotionQty(trait, level, delta) {
+  return guard(async () => {
+    await rpc('p_update_potion_qty', { ...pc(), p_trait: trait, p_level: level, delta });
+    await playerRefresh();
+  });
+}
+
+function quickCraftPotion(iaId, ibId, level) {
+  return guard(async () => {
+    const r = await rpc('p_quick_craft', { ...pc(), ia_id: iaId, ib_id: ibId, p_level: level });
+    await loadState();
+    storeView();
+    alert(r.ok ? `Successfully quick-crafted 1x Grade ${level} potion!` : `Quick craft failed: ${r.error}`);
+  });
+}
+
+// ---------- learned recipes tab ----------
+function potView() {
+  const made = P.made || [];
+  const cpOf = id => { const i = (P.all_ingredients || []).find(x => x.id === id); return i ? ingCp(i) : 0; };
+  const price = m => (P.potion_cp || {})[`${m.trait}|${m.level}`] ?? (cpOf(m.ia_id) + cpOf(m.ib_id) + 200);
+  const fx = (t, lv) => {
+    const e = (P.effects || {})[t];
+    if (!e) return '';
+    const v = (e.levels && e.levels[lv - 1]) ?? e['level' + lv] ?? e['l' + lv] ?? e[lv];
+    return typeof v === 'string' ? v : (v && (v.desc || v.description || v.effect)) || '';
+  };
+  $('#pv').innerHTML = !made.length
+    ? `<div class="${card} text-sm text-slate-400">You haven't learned any recipes yet. Head to the Brewing Station.</div>`
     : `<div class="grid md:grid-cols-2 gap-3">${made.map(m => {
         const e = (P.effects || {})[m.trait], nm = e && (e.potion || e.name);
         return `<div class="${card}">
           <div class="font-semibold text-amber-200 flex justify-between"><span>${esc(m.trait)}${nm ? ` <span class="text-slate-400 text-xs">(${esc(nm)})</span>` : ''}</span><span class="text-xs text-amber-300">Grade ${m.level}</span></div>
           <div class="text-xs text-slate-300 mt-1">${esc(fx(m.trait, m.level))}</div>
-          <div class="text-xs text-slate-400 mt-2">Brewed from ${esc(m.a)} + ${esc(m.b)}</div>
+          <div class="text-xs text-slate-400 mt-2">Recipe: ${esc(m.a)} +${esc(m.b)}</div>
           <div class="text-xs mt-1">Value: <strong class="text-amber-200">${fmtCp(price(m))}</strong></div></div>`;
       }).join('')}</div>`;
 }
@@ -631,8 +710,8 @@ function filterItems() {
   $('#item_list').innerHTML = !shown.length ? '<p class="text-xs text-slate-500">Nothing matches.</p>' : shown.map((x, n) => `
     <div class="p-3 bg-slate-900/60 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-2">
       <div>
-        <div class="font-bold text-amber-200 text-sm">${itemKind === 'ingredient' ? esc(x.name) : `${esc(x.trait)} — Grade ${x.level}`}</div>
-        <div class="text-[10px] text-slate-400">${itemKind === 'ingredient' ? `${esc(x.rarity)} · ${esc(x.biome)}` : 'Potion'} · Now: <strong class="text-amber-100">${x.cp == null ? 'Auto (materials + 2 gp)' : fmtCp(x.cp)}</strong>${x.custom ? ' (custom)' : ''}</div>
+        <div class="font-bold text-amber-200 text-sm">${itemKind === 'ingredient' ? esc(x.name) : `${esc(x.trait)} — Grade${x.level}`}</div>
+        <div class="text-[10px] text-slate-400">${itemKind === 'ingredient' ? `${esc(x.rarity)} ·${esc(x.biome)}` : 'Potion'} · Now: <strong class="text-amber-100">${x.cp == null ? 'Auto (materials + 2 gp)' : fmtCp(x.cp)}</strong>${x.custom ? ' (custom)' : ''}</div>
       </div>
       <div class="flex items-center gap-1">
         <input id="amt_${n}" type="number" min="0" step="any" class="${inp} !w-20" placeholder="Value">
@@ -640,7 +719,7 @@ function filterItems() {
         <button onclick="saveItem(${n})" class="${btn} text-xs">Save</button>
         ${x.custom ? `<button onclick="resetItem(${n})" class="${btn2} text-xs">Reset</button>` : ''}
       </div>
-    </div>`).join('');
+    </div>`).join('')}();
 }
 
 function saveItem(n) {
