@@ -94,126 +94,57 @@ async function dmHome(tab) {
       <button onclick="newCampaign()" class="${btn}">Create</button></div>` : ''}`);
 }
 
-function dmReagentsPanel(tabs) {
-  const biomes = [...new Set(ING.map(i => i.biome).filter(Boolean))];
-  render(tabs + `<div class="${card} space-y-3">
-    <h2 class="text-xl text-amber-200">Reagents Master Library (${ING.length})</h2>
-    <div class="grid sm:grid-cols-2 gap-2">
-      <input id="rm_q" class="${inp}" placeholder="Search reagents..." oninput="drawDmReagents()">
-      <select id="rm_b" class="${inp}" onchange="drawDmReagents()"><option value="">All Biomes</option>${biomes.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
-    </div>
-    <div id="rm_list" class="grid md:grid-cols-2 gap-3"></div>
-  </div>`);
-  drawDmReagents();
-}
-
-function drawDmReagents() {
-  const q = ($('#rm_q').value || '').toLowerCase();
-  const b = $('#rm_b').value;
-  const filtered = ING.filter(i => (!q || i.name.toLowerCase().includes(q)) && (!b || i.biome === b));
-  $('#rm_list').innerHTML = filtered.map(i => `<div class="${card}">
-    <div class="font-bold text-amber-200"><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)} <span class="text-xs text-slate-500">DC ${i.searchDC || 10}</span></div>
-    <div class="text-xs text-slate-400">${esc(i.biome)} — ${esc(i.location)}</div>
-    <div class="text-xs text-amber-400/80 mt-1">Traits: ${i.traits.map(t=>t.name).join(', ')}</div>
-  </div>`).join('');
-}
-
-async function openCampaign(id) {
+async function openCampaign(id, subView = 'main') {
   dm.cid = id;
-  const [{ data: c }, { data: ps }] = await Promise.all([sb.from('campaigns').select('name').eq('id', id).single(), sb.from('players').select('*').eq('campaign_id', id).order('username')]);
-  render(`<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaigns</button>
+  const [{ data: c }, { data: ps }, { data: logs }] = await Promise.all([
+    sb.from('campaigns').select('id, name, password').eq('id', id).single(),
+    sb.from('players').select('*').eq('campaign_id', id).order('username'),
+    sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false })
+  ]);
+  dm.cData = c;
+
+  const topBar = `<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaigns</button>
     <div class="flex justify-between items-center mb-3">
       <h2 class="text-xl text-amber-200">${esc(c.name)}</h2>
       <button onclick="downloadBackup()" class="${btn2} text-xs"><i class="fa-solid fa-download mr-1"></i> Download JSON Backup</button>
-    </div>
-    <div class="grid sm:grid-cols-3 gap-3 mb-6">${ps.map(p => `<button onclick="openPlayer('${p.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-user mr-2 text-amber-400"></i>${esc(p.username)}${p.master ? ' <i class="fa-solid fa-crown text-purple-400 text-xs"></i>' : ''}</button>`).join('')}</div>
-    <div class="${card} max-w-md space-y-2 mb-4"><h3 class="text-sm text-amber-300">Add Player</h3><input id="pn" class="${inp}" placeholder="Username"><button onclick="addPlayer()" class="${btn}">Add</button></div>`);
-}
+    </div>`;
 
-async function downloadBackup() {
-  const { data: p } = await sb.from('players').select('*').eq('campaign_id', dm.cid);
-  const pids = p.map(x => x.id);
-  const [{ data: ki }, { data: kt }, { data: inv }, { data: bw }] = await Promise.all([
-    sb.from('known_ingredients').select('*').in('player_id', pids),
-    sb.from('known_traits').select('*').in('player_id', pids),
-    sb.from('inventory').select('*').in('player_id', pids),
-    sb.from('brewed').select('*').in('player_id', pids)
-  ]);
-  const dump = JSON.stringify({ players: p, known_ingredients: ki, known_traits: kt, inventory: inv, brewed: bw }, null, 2);
-  const blob = new Blob([dump], { type: 'application/json' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `campaign_backup_${dm.cid}.json`; a.click();
-}
+  const tabs = `<div class="flex gap-2 mb-4">
+    <button onclick="openCampaign('${id}', 'main')" class="${subView === 'main' ? btn : btn2}">Campaign Overview</button>
+    <button onclick="openCampaign('${id}', 'logs')" class="${subView === 'logs' ? btn : btn2}"><i class="fa-solid fa-scroll mr-1"></i> Activity Log (${(logs || []).length})</button>
+  </div>`;
 
-async function openPlayer(pid) {
-  dm.pid = pid;
-  const [{ data: p }, { data: ki }, { data: kt }, { data: inv }] = await Promise.all([
-    sb.from('players').select('*').eq('id', pid).single(),
-    sb.from('known_ingredients').select('ingredient_id').eq('player_id', pid),
-    sb.from('known_traits').select('ingredient_id,trait_index').eq('player_id', pid),
-    sb.from('inventory').select('ingredient_id,qty').eq('player_id', pid)
-  ]);
-  const known = new Set(ki.map(r => r.ingredient_id));
-  const tr = new Set(kt.map(r => r.ingredient_id + ':' + r.trait_index));
-  const qtyMap = Object.fromEntries(inv.map(r => [r.ingredient_id, r.qty]));
+  if (subView === 'logs') {
+    render(topBar + tabs + `<div class="${card} space-y-2 max-h-[600px] overflow-y-auto">
+      <h3 class="text-sm font-bold text-amber-300 border-b border-slate-800 pb-2">Campaign Activity Log</h3>
+      ${(logs && logs.length) ? logs.map(l => `<div class="p-2.5 rounded-lg border border-slate-800 bg-slate-950/60 text-xs flex justify-between items-start gap-3">
+        <div><span class="font-bold text-amber-200 mr-2">${esc(l.username)}</span><span class="px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold bg-slate-800 text-slate-300">${esc(l.action)}</span><p class="text-slate-300 mt-1">${esc(l.details)}</p></div>
+        <span class="text-[10px] text-slate-500 whitespace-nowrap">${new Date(l.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+      </div>`).join('') : '<p class="text-xs text-slate-500">No activity logged yet.</p>'}
+    </div>`);
+    return;
+  }
 
-  render(`<button onclick="openCampaign('${dm.cid}')" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaign</button>
-    <h2 class="text-xl text-amber-200 mb-2">${esc(p.username)} Management</h2>
-    
-    <!-- FORAGING LOOT ROLLER -->
-    <div class="${card} mb-4 space-y-2 border-amber-500/40">
-      <h3 class="text-sm font-bold text-amber-300"><i class="fa-solid fa-dice-d20 mr-1"></i> One-Click Foraging Roller</h3>
-      <div class="grid sm:grid-cols-2 gap-2">
-        <select id="f_ing" class="${inp}">${ING.map(i => `<option value="${i.id}">${esc(i.name)} (DC${i.searchDC || 10})</option>`).join('')}</select>
-        <button onclick="dmRollSurvival()" class="${btn}"><i class="fa-solid fa-dice mr-1"></i> Roll Survival Check (d20)</button>
+  const last3 = ING.slice(-3);
+
+  render(topBar + tabs + `
+    <div class="${card} mb-4 space-y-3">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+        <h3 class="text-sm font-bold text-amber-300"><i class="fa-solid fa-users mr-2"></i>Active Players (${ps.length})</h3>
+        <button onclick="$('#add_p_box').classList.toggle('hidden')" class="${btn2} text-xs"><i class="fa-solid fa-user-plus mr-1"></i> Add Player</button>
       </div>
-      <div id="f_res" class="text-xs text-amber-200"></div>
+      <div id="add_p_box" class="hidden bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+        <h4 class="text-xs font-semibold text-slate-300">Create New Player Profile</h4>
+        <div class="flex gap-2"><input id="pn" class="${inp}" placeholder="Player username"><button onclick="addPlayer()" class="${btn}">Add</button></div>
+      </div>
+      <div class="grid sm:grid-cols-3 gap-3">
+        ${ps.map(p => `<button onclick="openPlayer('${p.id}')" class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-left hover:border-amber-500 flex justify-between items-center">
+          <div><div class="font-bold text-amber-200 text-sm">${esc(p.username)}</div><div class="text-[10px] text-slate-500">Skill: ${esc(p.foraging_skill \vert{}\vert{} 'nature')} (+${p.foraging_bonus || 0})</div></div>
+          <i class="fa-solid fa-chevron-right text-slate-600 text-xs"></i>
+        </button>`).join('')}
+      </div>
     </div>
-
-    <div class="grid md:grid-cols-2 gap-3">${ING.map(i => {
-      const k = known.has(i.id); const q = qtyMap[i.id] || 0;
-      return `<div class="${card}${k ? 'border-emerald-700' : ''}">
-        <div class="flex justify-between items-center">
-          <button onclick="toggleIng('${i.id}',${!k})" class="font-semibold ${k ? 'text-emerald-300' : 'text-slate-400'}"><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</button>
-          <div class="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded border border-slate-700 text-xs">
-            <button onclick="modQty('${i.id}',${q - 1})" class="px-1 text-red-400 font-bold">-</button>
-            <span>Qty: ${q}</span>
-            <button onclick="modQty('${i.id}',${q + 1})" class="px-1 text-emerald-400 font-bold">+</button>
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-1 mt-2">${i.traits.map((t, x) => {
-          const on = tr.has(i.id + ':' + x);
-          return `<button onclick="toggleTrait('${i.id}',${x},${!on})" class="text-xs px-2 py-0.5 rounded border ${on ? 'border-amber-500 bg-amber-500/20 text-amber-200' : 'border-slate-700 text-slate-500'}">${x+1}. ${esc(t.name)}</button>`;
-        }).join('')}</div>
-      </div>`;
-    }).join('')}</div>`);
-}
-
-async function dmRollSurvival() {
-  const iid = $('#f_ing').value;
-  const ing = ING.find(x => x.id === iid);
-  const el = $('#f_res');
-  el.innerHTML = `<span class="inline-block animate-dice text-amber-400 text-lg mr-2"><i class="fa-solid fa-dice-d20"></i></span> Rolling Survival Check against DC ${ing.searchDC || 10}...`;
-  setTimeout(async () => {
-    const roll = Math.floor(Math.random() * 20) + 1;
-    const dc = ing.searchDC || 10;
-    const pass = roll >= dc;
-    const yieldAmount = pass ? Math.floor(Math.random() * 4) + 1 : 0;
-    if (yieldAmount > 0) {
-      await sb.from('known_ingredients').upsert({ player_id: dm.pid, ingredient_id: iid });
-      const { data: cur } = await sb.from('inventory').select('qty').eq('player_id', dm.pid).eq('ingredient_id', iid).single();
-      const newQty = ((cur ? cur.qty : 0) + yieldAmount);
-      await sb.from('inventory').upsert({ player_id: dm.pid, ingredient_id: iid, qty: newQty });
-    }
-    el.innerHTML = `<strong class="${pass ? 'text-emerald-400' : 'text-red-400'}">Rolled ${roll} vs DC ${dc} (${pass ? 'SUCCESS' : 'FAILED'})</strong>. Yielded <strong>${yieldAmount}x ${esc(ing.name)}</strong> added to player inventory!`;
-    openPlayer(dm.pid);
-  }, 700);
-}
-
-async function modQty(iid, newQty) {
-  if (newQty < 0) newQty = 0;
-  await sb.from('known_ingredients').upsert({ player_id: dm.pid, ingredient_id: iid });
-  await sb.from('inventory').upsert({ player_id: dm.pid, ingredient_id: iid, qty: newQty });
-  openPlayer(dm.pid);
+  `);
 }
 
 // ================= PLAYER SIDE =================
@@ -224,14 +155,60 @@ async function playerRefresh(fromLogin) {
   if (!data) return loginView('player');
   try { sessionStorage.setItem('pc', JSON.stringify(creds)); } catch (e) {}
   P = data; $('#who').innerHTML = `${esc(P.username)} · ${esc(P.campaign)} <button onclick="logout()" class="ml-2 underline">Log out</button>`;
-  playerView(window.ptab || 'brew');
+  playerView(window.ptab || 'lib');
 }
 
 function playerView(tab) {
   window.ptab = tab;
   const t = (k, l) => `<button onclick="playerView('${k}')" class="${tab === k ? btn : btn2}">${l}</button>`;
-  render(`<div class="flex gap-2 mb-5">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Potions')}</div><div id="pv"></div>`);
-  tab === 'lib' ? libView() : tab === 'pot' ? potView() : brewView();
+  render(`<div class="flex items-center justify-between mb-5">
+    <div class="flex gap-2">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Potions')}</div>
+    <div>${t('options', 'Options')}</div>
+  </div><div id="pv"></div>`);
+  tab === 'lib' ? libView() : tab === 'options' ? optionsView() : tab === 'pot' ? potView() : brewView();
+}
+
+function optionsView() {
+  const skill = P.foraging_skill || 'nature';
+  const bonus = P.foraging_bonus || 0;
+  $('#pv').innerHTML = `<div class="${card} max-w-md mx-auto space-y-4">
+    <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-gear mr-2"></i>Character Options & Skill Settings</h3>
+    <div>
+      <label class="text-xs text-slate-400">Character Name</label>
+      <input id="opt_name" class="${inp} mt-1" value="${esc(P.username)}">
+    </div>
+    <div>
+      <label class="text-xs text-slate-400">Foraging Modifier Skill</label>
+      <div class="flex gap-2 mt-1">
+        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded-lg flex items-center gap-2 text-xs cursor-pointer">
+          <input type="radio" name="f_skill" value="nature" ${skill==='nature'?'checked':''}> Nature / Int
+        </label>
+        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded-lg flex items-center gap-2 text-xs cursor-pointer">
+          <input type="radio" name="f_skill" value="survival" ${skill==='survival'?'checked':''}> Survival / Wis
+        </label>
+        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded-lg flex items-center gap-2 text-xs cursor-pointer">
+          <input type="radio" name="f_skill" value="perception" ${skill==='perception'?'checked':''}> Perception
+        </label>
+      </div>
+    </div>
+    <div>
+      <label class="text-xs text-slate-400">Current Bonus Numerical Value (+Modifier)</label>
+      <input id="opt_bonus" type="number" class="${inp} mt-1" value="${bonus}">
+    </div>
+    <button onclick="saveOptions()" class="${btn} w-full">Save Options</button>
+  </div>`;
+}
+
+async function saveOptions() {
+  const name = $('#opt_name').value.trim();
+  const skill = document.querySelector('input[name="f_skill"]:checked').value;
+  const bonus = parseInt($('#opt_bonus').value) || 0;
+  
+  const { error } = await sb.rpc('p_update_options', { uname: creds.u, pass: creds.p, new_name: name, f_skill: skill, f_bonus: bonus });
+  if (error) return fail(error);
+  creds.u = name;
+  await playerRefresh();
+  alert('Options updated!');
 }
 
 function libView() {
@@ -245,15 +222,109 @@ function libView() {
 function drawPlayerLib() {
   const b = $('#p_bio').value;
   const filtered = P.ingredients.filter(i => !b || i.biome === b);
-  $('#p_lib_list').innerHTML = filtered.map(i => `<div class="${card}">
-    <div class="font-semibold text-amber-200 flex justify-between">
+  $('#p_lib_list').innerHTML = filtered.map(i => `<div class="${card} relative">
+    <div class="font-semibold text-amber-200 flex justify-between items-start">
       <span><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</span>
-      <span class="text-xs text-emerald-400 font-bold">In Stock: ${i.qty || 0}</span>
+      <button onclick="editQtyPrompt('${i.id}', ${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">
+        (Click to edit) In Stock: ${i.qty || 0}
+      </button>
     </div>
     <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>
     ${i.traits.map(t => t.name ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}.${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>` : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
-    ${!i.traits[0].name ? `<button onclick="doTasteTest('${i.id}')" class="${btn2} text-xs mt-3 w-full"><i class="fa-solid fa-vial mr-1"></i> Taste Test (Raw Con Save DC 10)</button>` : ''}
+    
+    <div class="mt-3 pt-3 border-t border-slate-800/80 flex gap-2">
+      ${!i.traits[0].name ? `<button onclick="doTasteTest('${i.id}')" class="${btn2} text-xs flex-1"><i class="fa-solid fa-vial mr-1"></i> Taste Test</button>` : ''}
+      <button onclick="forageInteractive('${i.id}')" class="${btn} text-xs flex-1"><i class="fa-solid fa-seedling mr-1"></i> Forage For More</button>
+    </div>
   </div>`).join('');
+}
+
+async function editQtyPrompt(iid, curQty) {
+  const val = prompt("Set custom inventory quantity for this ingredient:", curQty);
+  if (val === null) return;
+  const newQty = parseInt(val);
+  if (isNaN(newQty)) return;
+  
+  const { error } = await sb.rpc('p_set_qty', { uname: creds.u, pass: creds.p, iid, new_qty: newQty });
+  if (error) return fail(error);
+  await playerRefresh();
+}
+
+function forageInteractive(iid) {
+  const ing = P.ingredients.find(x => x.id === iid);
+  const skill = P.foraging_skill || 'nature';
+  const bonus = P.foraging_bonus || 0;
+
+  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
+    <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-magnifying-glass-location mr-2"></i>Foraging: ${esc(ing.name)}</h3>
+    <p class="text-xs text-slate-400">Bonus applied: <strong>+${bonus}</strong> (${esc(skill.toUpperCase())})</p>
+    
+    <div id="dice_box" class="py-6">
+      <div id="d20_icon" class="text-5xl text-amber-400"><i class="fa-solid fa-dice-d20"></i></div>
+      <div id="roll_status" class="text-sm font-bold mt-2 text-slate-300">Ready to roll search check...</div>
+    </div>
+
+    <div id="act_btns">
+      <button onclick="runForageD20('${iid}')" class="${btn} w-full"><i class="fa-solid fa-dice mr-1"></i> Roll D20 Search Check</button>
+    </div>
+  </div>`);
+}
+
+async function runForageD20(iid) {
+  $('#d20_icon').classList.add('animate-dice');
+  $('#roll_status').textContent = "Searching through foliage...";
+  $('#act_btns').innerHTML = '';
+
+  setTimeout(async () => {
+    $('#d20_icon').classList.remove('animate-dice');
+    const d20 = Math.floor(Math.random() * 20) + 1;
+    const ing = P.ingredients.find(x => x.id === iid);
+    const bonus = P.foraging_bonus || 0;
+    const total = d20 + bonus;
+
+    let reqDc = 8;
+    const rarity = (ing.rarity || 'common').toLowerCase();
+    if (rarity === 'uncommon') reqDc = 12;
+    if (rarity === 'rare') reqDc = 14;
+    if (rarity === 'extremely rare' || rarity === 'ext-rare') reqDc = 16;
+    if (P.master) reqDc = reqDc - 4;
+
+    const pass = total >= reqDc;
+
+    if (!pass) {
+      // Record failure
+      await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: d20, d4_yield: 0 });
+      $('#roll_status').innerHTML = `<span class="text-red-400 font-bold">Rolled ${d20} + ${bonus} = ${total} (DC ${reqDc})</span><br><span class="text-xs text-slate-400">Search unsuccessful. No ingredients found.</span>`;
+      $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn2} w-full mt-3">Back to Reagents</button>`;
+    } else {
+      $('#roll_status').innerHTML = `<span class="text-emerald-400 font-bold">SUCCESS! Rolled ${d20} + ${bonus} = ${total} (DC ${reqDc})</span>`;
+      
+      // Step 2: Prompt for Quantity Roll
+      $('#act_btns').innerHTML = `
+        <div id="d4_box" class="my-4">
+          <div id="d4_icon" class="text-4xl text-amber-400"><i class="fa-solid fa-dice-d4"></i></div>
+          <div id="d4_status" class="text-xs text-amber-200 mt-1">Roll for harvest yield (1d4)...</div>
+        </div>
+        <button onclick="runForageD4('${iid}', ${d20})" class="${btn} w-full">Roll For Quantity (1d4)</button>
+      `;
+    }
+  }, 700);
+}
+
+async function runForageD4(iid, originalD20) {
+  $('#d4_icon').classList.add('animate-dice');
+  $('#d4_status').textContent = "Harvesting plants...";
+
+  setTimeout(async () => {
+    $('#d4_icon').classList.remove('animate-dice');
+    const d4 = Math.floor(Math.random() * 4) + 1;
+    
+    await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: originalD20, d4_yield: d4 });
+    await playerRefresh();
+
+    $('#d4_status').innerHTML = `<span class="text-emerald-300 font-bold text-base">Harvested +${d4} units!</span>`;
+    $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn} w-full mt-3">Back to Reagents</button>`;
+  }, 600);
 }
 
 function doTasteTest(iid) {
