@@ -188,7 +188,8 @@ function openCampaign(id) {
       </div>
       <div class="flex justify-between items-end mb-3">
         <h2 class="text-xl text-amber-200">${esc(c.name)} Overview</h2>
-        <div class="text-xs text-slate-400">Join Password: <strong class="text-amber-100">${esc(c.password)}</strong></div>
+        <div class="text-xs text-slate-400">Join Password: <strong class="text-amber-100">${esc(c.password)}</strong>
+          <button onclick="changeCampaignPassword()" class="ml-2 underline hover:text-amber-200">Change</button></div>
       </div>
       <div class="${card} space-y-2 mb-4">
         <h3 class="text-sm font-bold text-amber-300">Join Requests</h3>
@@ -211,6 +212,16 @@ function openCampaign(id) {
             : '<p class="text-xs text-slate-500">No logs yet.</p>'}
         </div>
       </div>`);
+  });
+}
+
+function changeCampaignPassword() {
+  const np = (prompt('Enter a new join password for this campaign:') || '').trim();
+  if (!np) return;
+  return guard(async () => {
+    await rpc('dm_set_campaign_password', { cid: dm.cid, new_pass: np });
+    alert('Join password changed. Players must use the new password from now on.');
+    openCampaign(dm.cid);
   });
 }
 
