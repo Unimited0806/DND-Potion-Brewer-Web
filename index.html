@@ -7,7 +7,12 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Inter:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<style>body{font-family:Inter,sans-serif}h1,h2,h3,.ser{font-family:Cinzel,serif}</style>
+<style>
+  body { font-family: Inter, sans-serif; }
+  h1, h2, h3, .ser { font-family: Cinzel, serif; }
+  @keyframes dice-spin { 0% { transform: rotate(0deg) scale(0.8); } 50% { transform: rotate(180deg) scale(1.2); } 100% { transform: rotate(360deg) scale(1); } }
+  .animate-dice { animation: dice-spin 0.6s ease-in-out infinite; }
+</style>
 </head>
 <body class="text-slate-200 min-h-screen">
 <header class="bg-slate-900/80 border-b border-slate-800 sticky top-0 z-10">
@@ -19,7 +24,6 @@
 <main id="app" class="max-w-5xl mx-auto px-4 py-6"></main>
 
 <script>
-// ====== CONFIG: paste your Supabase values (Settings > API). The anon key is meant to be public. ======
 const SUPABASE_URL = "https://ratnpbutyevultkjlfxw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_15LGzTrmo_CmKNR3gbgHDQ_GUWwHLvP";
 
@@ -34,7 +38,7 @@ const fail = e => alert(e && e.message ? e.message : e);
 let sb, ING = [], EFF = {}, P = null, creds = null, dm = {};
 
 if (SUPABASE_URL.startsWith('PASTE')) {
-  render(`<div class="${card}">Open <code>index.html</code> and paste your Supabase URL and anon key at the top of the script.</div>`);
+  render(`<div class="${card}">Open <code>index.html</code> and paste your Supabase URL and anon key.</div>`);
 } else {
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   boot();
@@ -55,155 +59,161 @@ function loginView(tab) {
     ${tab==='player' ? `
       <input id="u" class="${inp}" placeholder="Username" autocomplete="username">
       <input id="p" type="password" class="${inp}" placeholder="Campaign password" autocomplete="current-password">
-      <button onclick="playerLogin()" class="${btn} w-full">Enter the Laboratory</button>
-      <p class="text-xs text-slate-500">Your DM gives you your username and the campaign password.</p>` : `
+      <button onclick="playerLogin()" class="${btn} w-full">Enter Laboratory</button>` : `
       <input id="e" type="email" class="${inp}" placeholder="DM email">
       <input id="p" type="password" class="${inp}" placeholder="Password">
       <div class="flex gap-2"><button onclick="dmLogin()" class="${btn} flex-1">Sign in</button><button onclick="dmSignup()" class="${btn2} flex-1">Create DM account</button></div>`}
   </div>`);
 }
-async function dmLogin() { const { error } = await sb.auth.signInWithPassword({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : (creds = null, sessionStorage.removeItem('pc'), dmHome()); }
-async function dmSignup() { const { error } = await sb.auth.signUp({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : (alert('Account created. If asked, confirm your email, then sign in.')); }
-async function logout() { if (!creds) await sb.auth.signOut(); sessionStorage.removeItem('pc'); creds = null; $('#who').textContent = ''; loginView('player'); }  // players log out without touching a DM session in the same browser
+async function dmLogin() { const { error } = await sb.auth.signInWithPassword({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : dmHome(); }
+async function dmSignup() { const { error } = await sb.auth.signUp({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : alert('Account created.'); }
+async function logout() { if (!creds) await sb.auth.signOut(); sessionStorage.removeItem('pc'); creds = null; $('#who').textContent = ''; loginView('player'); }
 
 // ================= DM SIDE =================
 async function dmHome(tab) {
   $('#who').innerHTML = `DM <button onclick="logout()" class="ml-2 underline">Log out</button>`;
-  if (!ING.length) { const { data, error } = await sb.from('ingredients').select('id,data'); if (error) return fail(error); const RK = { Common: 0, Uncommon: 1, Rare: 2 }; ING = data.map(r => r.data).sort((a, b) => (RK[a.rarity] - RK[b.rarity]) || a.name.localeCompare(b.name));
-    const ef = await sb.from('effects').select('trait,data'); EFF = Object.fromEntries((ef.data || []).map(r => [r.trait, r.data])); }
-  const tabs = `<div class="flex gap-2 mb-5"><button onclick="dmHome()" class="${tab === 'potions' ? btn2 : btn}">Campaigns</button><button onclick="dmHome('potions')" class="${tab === 'potions' ? btn : btn2}">Potion Index</button></div>`;
-  if (tab === 'potions') { render(tabs + '<div id="pv"></div>'); return potionsPanel($('#pv'), dmIndex(), 'No potions can be made with the current ingredients.', true); }
-  const { data: cs, error } = await sb.from('campaigns').select('id,name').order('created_at'); if (error) return fail(error);
-  render(tabs + `<h2 class="text-xl text-amber-200 mb-3">Your Campaigns <span class="text-sm text-slate-500">(${cs.length}/5)</span></h2>
-    <div class="grid sm:grid-cols-2 gap-3 mb-6">${cs.map(c => `<button onclick="openCampaign('${c.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-book-skull text-amber-400 mr-2"></i>${esc(c.name)}</button>`).join('') || '<p class="text-slate-500">No campaigns yet.</p>'}</div>
-    ${cs.length < 5 ? `<div class="${card} max-w-md space-y-2"><h3 class="text-sm text-amber-300">New campaign</h3>
-      <input id="cn" class="${inp}" placeholder="Campaign name"><input id="cp" class="${inp}" placeholder="Campaign password for players (6+ chars)">
+  if (!ING.length) {
+    const { data } = await sb.from('ingredients').select('id,data');
+    ING = data.map(r => r.data).sort((a,b) => a.name.localeCompare(b.name));
+    const ef = await sb.from('effects').select('trait,data');
+    EFF = Object.fromEntries((ef.data || []).map(r => [r.trait, r.data]));
+  }
+  const tabs = `<div class="flex gap-2 mb-5">
+    <button onclick="dmHome()" class="${!tab ? btn : btn2}">Campaigns</button>
+    <button onclick="dmHome('potions')" class="${tab === 'potions' ? btn : btn2}">Potion Index</button>
+    <button onclick="dmHome('reagents')" class="${tab === 'reagents' ? btn : btn2}">Reagents Manager</button>
+  </div>`;
+  if (tab === 'potions') { render(tabs + '<div id="pv"></div>'); return potionsPanel($('#pv'), dmIndex(), 'No brewable potions.', true); }
+  if (tab === 'reagents') { return dmReagentsPanel(tabs); }
+
+  const { data: cs } = await sb.from('campaigns').select('id,name').order('created_at');
+  render(tabs + `<h2 class="text-xl text-amber-200 mb-3">Your Campaigns (${cs.length}/5)</h2>
+    <div class="grid sm:grid-cols-2 gap-3 mb-6">${cs.map(c => `<button onclick="openCampaign('${c.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-book-skull text-amber-400 mr-2"></i>${esc(c.name)}</button>`).join('')}</div>
+    ${cs.length < 5 ? `<div class="${card} max-w-md space-y-2"><h3 class="text-sm text-amber-300">New Campaign</h3>
+      <input id="cn" class="${inp}" placeholder="Campaign name"><input id="cp" class="${inp}" placeholder="Password (6+ chars)">
       <button onclick="newCampaign()" class="${btn}">Create</button></div>` : ''}`);
 }
-async function newCampaign() { const { error } = await sb.rpc('create_campaign', { cname: $('#cn').value.trim(), cpass: $('#cp').value }); error ? fail(error) : dmHome(); }
+
+function dmReagentsPanel(tabs) {
+  const biomes = [...new Set(ING.map(i => i.biome).filter(Boolean))];
+  render(tabs + `<div class="${card} space-y-3">
+    <h2 class="text-xl text-amber-200">Reagents Master Library (${ING.length})</h2>
+    <div class="grid sm:grid-cols-2 gap-2">
+      <input id="rm_q" class="${inp}" placeholder="Search reagents..." oninput="drawDmReagents()">
+      <select id="rm_b" class="${inp}" onchange="drawDmReagents()"><option value="">All Biomes</option>${biomes.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
+    </div>
+    <div id="rm_list" class="grid md:grid-cols-2 gap-3"></div>
+  </div>`);
+  drawDmReagents();
+}
+
+function drawDmReagents() {
+  const q = ($('#rm_q').value || '').toLowerCase();
+  const b = $('#rm_b').value;
+  const filtered = ING.filter(i => (!q || i.name.toLowerCase().includes(q)) && (!b || i.biome === b));
+  $('#rm_list').innerHTML = filtered.map(i => `<div class="${card}">
+    <div class="font-bold text-amber-200"><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)} <span class="text-xs text-slate-500">DC ${i.searchDC || 10}</span></div>
+    <div class="text-xs text-slate-400">${esc(i.biome)} — ${esc(i.location)}</div>
+    <div class="text-xs text-amber-400/80 mt-1">Traits: ${i.traits.map(t=>t.name).join(', ')}</div>
+  </div>`).join('');
+}
 
 async function openCampaign(id) {
-  dm.cid = id; dm.shown = null; window.TFQ = '';
-  const [{ data: c }, { data: ps, error }] = await Promise.all([sb.from('campaigns').select('name').eq('id', id).single(), sb.from('players').select('*').eq('campaign_id', id).order('username')]);
-  if (error) return fail(error);
-  dm.cname = c.name;
+  dm.cid = id;
+  const [{ data: c }, { data: ps }] = await Promise.all([sb.from('campaigns').select('name').eq('id', id).single(), sb.from('players').select('*').eq('campaign_id', id).order('username')]);
   render(`<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaigns</button>
-    <h2 class="text-xl text-amber-200 mb-3">${esc(c.name)}</h2>
-    <div class="grid sm:grid-cols-3 gap-3 mb-6">${ps.map(p => `<button onclick="openPlayer('${p.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-user mr-2 text-amber-400"></i>${esc(p.username)}${p.master ? ' <i class="fa-solid fa-crown text-purple-400 text-xs"></i>' : ''}</button>`).join('') || '<p class="text-slate-500">No players yet.</p>'}</div>
-    <div class="${card} max-w-md space-y-2 mb-4"><h3 class="text-sm text-amber-300">Add player</h3>
-      <input id="pn" class="${inp}" placeholder="Username"><button onclick="addPlayer()" class="${btn}">Add</button></div>
-    <div class="${card} max-w-md space-y-2"><h3 class="text-sm text-amber-300">Campaign settings</h3>
-      <input id="np" class="${inp}" placeholder="New campaign password"><div class="flex gap-2"><button onclick="changePass()" class="${btn2}">Change password</button>
-      <button onclick="delCampaign()" class="${btn2} text-red-400">Delete campaign</button></div></div>`);
+    <div class="flex justify-between items-center mb-3">
+      <h2 class="text-xl text-amber-200">${esc(c.name)}</h2>
+      <button onclick="downloadBackup()" class="${btn2} text-xs"><i class="fa-solid fa-download mr-1"></i> Download JSON Backup</button>
+    </div>
+    <div class="grid sm:grid-cols-3 gap-3 mb-6">${ps.map(p => `<button onclick="openPlayer('${p.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-user mr-2 text-amber-400"></i>${esc(p.username)}${p.master ? ' <i class="fa-solid fa-crown text-purple-400 text-xs"></i>' : ''}</button>`).join('')}</div>
+    <div class="${card} max-w-md space-y-2 mb-4"><h3 class="text-sm text-amber-300">Add Player</h3><input id="pn" class="${inp}" placeholder="Username"><button onclick="addPlayer()" class="${btn}">Add</button></div>`);
 }
-async function addPlayer() { const u = $('#pn').value.trim(); if (!u) return; const { error } = await sb.from('players').insert({ campaign_id: dm.cid, username: u }); error ? fail(error.code === '23505' ? 'That username already exists here.' : error) : openCampaign(dm.cid); }
-async function changePass() { const { error } = await sb.rpc('set_campaign_password', { cid: dm.cid, cpass: $('#np').value }); error ? fail(error) : alert('Password changed.'); }
-async function delCampaign() { if (!confirm('Delete this campaign and all its players?')) return; await sb.from('campaigns').delete().eq('id', dm.cid); dmHome(); }
+
+async function downloadBackup() {
+  const { data: p } = await sb.from('players').select('*').eq('campaign_id', dm.cid);
+  const pids = p.map(x => x.id);
+  const [{ data: ki }, { data: kt }, { data: inv }, { data: bw }] = await Promise.all([
+    sb.from('known_ingredients').select('*').in('player_id', pids),
+    sb.from('known_traits').select('*').in('player_id', pids),
+    sb.from('inventory').select('*').in('player_id', pids),
+    sb.from('brewed').select('*').in('player_id', pids)
+  ]);
+  const dump = JSON.stringify({ players: p, known_ingredients: ki, known_traits: kt, inventory: inv, brewed: bw }, null, 2);
+  const blob = new Blob([dump], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `campaign_backup_${dm.cid}.json`; a.click();
+}
 
 async function openPlayer(pid) {
-  dm.pid = pid; const same = dm.shown === pid, y = window.scrollY;
-  const [{ data: p }, { data: ki }, { data: kt }, { data: bw }] = await Promise.all([sb.from('players').select('*').eq('id', pid).single(), sb.from('known_ingredients').select('ingredient_id').eq('player_id', pid), sb.from('known_traits').select('ingredient_id,trait_index').eq('player_id', pid), sb.from('brewed').select('trait,level,ing_a,ing_b').eq('player_id', pid).order('trait')]);
-  const nm = id => (ING.find(i => i.id === id) || {}).name || id;
-  const madeHtml = (bw || []).map(b => `<li>${esc((EFF[b.trait] || fallbackEffect(b.trait)).name)} · Level ${b.level} <span class="text-slate-500">(${esc(nm(b.ing_a))} + ${esc(nm(b.ing_b))})</span></li>`).join('');
-  const known = new Set(ki.map(r => r.ingredient_id)), tr = new Set(kt.map(r => r.ingredient_id + ':' + r.trait_index));
-  render(`<button onclick="openCampaign('${dm.cid}')" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> ${esc(dm.cname)}</button>
-    <div class="flex flex-wrap items-center justify-between gap-2 mb-1"><h2 class="text-xl text-amber-200">${esc(p.username)}</h2>
-      <div class="flex gap-2"><label class="text-sm flex items-center gap-2"><input type="checkbox" ${p.master ? 'checked' : ''} onchange="setMaster(this.checked)"> Master Alchemist</label>
-      <button onclick="delPlayer()" class="${btn2} text-red-400">Remove</button></div></div>
-    <div class="${card} mb-4"><h3 class="text-sm text-amber-300 mb-1">Potions made</h3>${madeHtml ? `<ul class="text-sm list-disc ml-5">${madeHtml}</ul>` : '<p class="text-xs text-slate-500">None yet.</p>'}</div>
-    <p class="text-xs text-slate-500 mb-4">Click an ingredient to teach it. Click a trait chip to teach that trait (this also teaches the ingredient).</p>
-    <input id="tf" class="${inp} mb-3" placeholder="Filter ingredients or traits…" oninput="filterTeach()">
-    <div class="grid md:grid-cols-2 gap-3">${ING.map(i => { const k = known.has(i.id); return `<div data-s="${esc((i.name + ' ' + i.rarity + ' ' + i.traits.map(t => t.name).join(' ')).toLowerCase())}" class="tcard ${card} ${k ? 'border-emerald-700' : ''}">
-      <button onclick="toggleIng('${i.id}',${!k})" class="w-full text-left font-semibold ${k ? 'text-emerald-300' : 'text-slate-400'}"><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)} <span class="text-xs text-slate-500">${esc(i.rarity)}</span>${k ? '<i class="fa-solid fa-check float-right"></i>' : ''}</button>
-      <div class="flex flex-wrap gap-1.5 mt-2">${i.traits.map((t, x) => { const on = tr.has(i.id + ':' + x); return `<button title="${esc(t.desc)}" onclick="toggleTrait('${i.id}',${x},${!on})" class="text-xs px-2 py-1 rounded border ${on ? 'border-amber-500 bg-amber-500/20 text-amber-200' : 'border-slate-700 text-slate-500'}">${x + 1}. ${esc(t.name)}</button>`; }).join('')}</div></div>`; }).join('')}</div>`);
-  dm.shown = pid; const f = $('#tf'); if (f) { f.value = window.TFQ || ''; filterTeach(); } if (same) window.scrollTo(0, y);
+  dm.pid = pid;
+  const [{ data: p }, { data: ki }, { data: kt }, { data: inv }] = await Promise.all([
+    sb.from('players').select('*').eq('id', pid).single(),
+    sb.from('known_ingredients').select('ingredient_id').eq('player_id', pid),
+    sb.from('known_traits').select('ingredient_id,trait_index').eq('player_id', pid),
+    sb.from('inventory').select('ingredient_id,qty').eq('player_id', pid)
+  ]);
+  const known = new Set(ki.map(r => r.ingredient_id));
+  const tr = new Set(kt.map(r => r.ingredient_id + ':' + r.trait_index));
+  const qtyMap = Object.fromEntries(inv.map(r => [r.ingredient_id, r.qty]));
+
+  render(`<button onclick="openCampaign('${dm.cid}')" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaign</button>
+    <h2 class="text-xl text-amber-200 mb-2">${esc(p.username)} Management</h2>
+    
+    <!-- FORAGING LOOT ROLLER -->
+    <div class="${card} mb-4 space-y-2 border-amber-500/40">
+      <h3 class="text-sm font-bold text-amber-300"><i class="fa-solid fa-dice-d20 mr-1"></i> One-Click Foraging Roller</h3>
+      <div class="grid sm:grid-cols-2 gap-2">
+        <select id="f_ing" class="${inp}">${ING.map(i => `<option value="${i.id}">${esc(i.name)} (DC${i.searchDC || 10})</option>`).join('')}</select>
+        <button onclick="dmRollSurvival()" class="${btn}"><i class="fa-solid fa-dice mr-1"></i> Roll Survival Check (d20)</button>
+      </div>
+      <div id="f_res" class="text-xs text-amber-200"></div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-3">${ING.map(i => {
+      const k = known.has(i.id); const q = qtyMap[i.id] || 0;
+      return `<div class="${card}${k ? 'border-emerald-700' : ''}">
+        <div class="flex justify-between items-center">
+          <button onclick="toggleIng('${i.id}',${!k})" class="font-semibold ${k ? 'text-emerald-300' : 'text-slate-400'}"><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</button>
+          <div class="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded border border-slate-700 text-xs">
+            <button onclick="modQty('${i.id}',${q - 1})" class="px-1 text-red-400 font-bold">-</button>
+            <span>Qty: ${q}</span>
+            <button onclick="modQty('${i.id}',${q + 1})" class="px-1 text-emerald-400 font-bold">+</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-1 mt-2">${i.traits.map((t, x) => {
+          const on = tr.has(i.id + ':' + x);
+          return `<button onclick="toggleTrait('${i.id}',${x},${!on})" class="text-xs px-2 py-0.5 rounded border ${on ? 'border-amber-500 bg-amber-500/20 text-amber-200' : 'border-slate-700 text-slate-500'}">${x+1}. ${esc(t.name)}</button>`;
+        }).join('')}</div>
+      </div>`;
+    }).join('')}</div>`);
 }
-function filterTeach() {
-  const q = ($('#tf').value || '').trim().toLowerCase(); window.TFQ = q;
-  document.querySelectorAll('.tcard').forEach(c => c.classList.toggle('hidden', !!q && !c.dataset.s.includes(q)));
+
+async function dmRollSurvival() {
+  const iid = $('#f_ing').value;
+  const ing = ING.find(x => x.id === iid);
+  const el = $('#f_res');
+  el.innerHTML = `<span class="inline-block animate-dice text-amber-400 text-lg mr-2"><i class="fa-solid fa-dice-d20"></i></span> Rolling Survival Check against DC ${ing.searchDC || 10}...`;
+  setTimeout(async () => {
+    const roll = Math.floor(Math.random() * 20) + 1;
+    const dc = ing.searchDC || 10;
+    const pass = roll >= dc;
+    const yieldAmount = pass ? Math.floor(Math.random() * 4) + 1 : 0;
+    if (yieldAmount > 0) {
+      await sb.from('known_ingredients').upsert({ player_id: dm.pid, ingredient_id: iid });
+      const { data: cur } = await sb.from('inventory').select('qty').eq('player_id', dm.pid).eq('ingredient_id', iid).single();
+      const newQty = ((cur ? cur.qty : 0) + yieldAmount);
+      await sb.from('inventory').upsert({ player_id: dm.pid, ingredient_id: iid, qty: newQty });
+    }
+    el.innerHTML = `<strong class="${pass ? 'text-emerald-400' : 'text-red-400'}">Rolled ${roll} vs DC ${dc} (${pass ? 'SUCCESS' : 'FAILED'})</strong>. Yielded <strong>${yieldAmount}x ${esc(ing.name)}</strong> added to player inventory!`;
+    openPlayer(dm.pid);
+  }, 700);
 }
-async function toggleIng(iid, on) {
-  const q = on ? sb.from('known_ingredients').upsert({ player_id: dm.pid, ingredient_id: iid })
-    : sb.from('known_ingredients').delete().eq('player_id', dm.pid).eq('ingredient_id', iid);
-  const { error } = await q; if (error) return fail(error);
-  if (!on) await sb.from('known_traits').delete().eq('player_id', dm.pid).eq('ingredient_id', iid);
+
+async function modQty(iid, newQty) {
+  if (newQty < 0) newQty = 0;
+  await sb.from('known_ingredients').upsert({ player_id: dm.pid, ingredient_id: iid });
+  await sb.from('inventory').upsert({ player_id: dm.pid, ingredient_id: iid, qty: newQty });
   openPlayer(dm.pid);
-}
-async function toggleTrait(iid, x, on) {
-  let r;
-  if (on) { await sb.from('known_ingredients').upsert({ player_id: dm.pid, ingredient_id: iid }); r = await sb.from('known_traits').upsert({ player_id: dm.pid, ingredient_id: iid, trait_index: x }); }
-  else r = await sb.from('known_traits').delete().eq('player_id', dm.pid).eq('ingredient_id', iid).eq('trait_index', x);
-  r.error ? fail(r.error) : openPlayer(dm.pid);
-}
-async function setMaster(v) { await sb.from('players').update({ master: v }).eq('id', dm.pid); }
-async function delPlayer() { if (!confirm('Remove this player?')) return; await sb.from('players').delete().eq('id', dm.pid); openCampaign(dm.cid); }
-
-// ================= POTIONS (shared) =================
-const POT_LV = { 1: ['Minor', 'DC 10'], 2: ['Moderate', 'DC 13'], 3: ['Greater', 'DC 16'] };
-const fallbackEffect = t => ({ name: 'Potion of ' + t, icon: 'fa-vial', l1: `A minor ${t} effect.`, l2: `A moderate ${t} effect.`, l3: `A greater ${t} effect.` });
-const boldT = s => esc(s).replace(/\*\*(.*?)\*\*/g, '<strong class="text-emerald-300">$1</strong>');
-let POT = [], POTEMPTY = '', POTDM = false;
-
-// DM: every potion that can be brewed with the current ingredients, by solvent level.
-// L1 = trait 1 on both, L2 = trait 2 on both, L3 = trait 3 or 4 (same slot) for everyone; any other slot pairing at L3 is Master-only.
-function dmIndex() {
-  const by = {}, add = (t, n, label) => { ((by[t] ??= { 1: [], 2: [], 3: [] })[n]).push(label); };
-  for (let x = 0; x < ING.length; x++) for (let y = x + 1; y < ING.length; y++) for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++) {
-    const t = ING[x].traits[a].name; if (t !== ING[y].traits[b].name) continue;
-    const lab = ING[x].name + ' + ' + ING[y].name;
-    if (a === 0 && b === 0) add(t, 1, lab);
-    if (a === 1 && b === 1) add(t, 2, lab);
-    if (a === b && a >= 2) add(t, 3, lab + ' (slot ' + (a + 1) + ')');
-    else add(t, 3, lab + ' (slots ' + (a + 1) + '/' + (b + 1) + ', Master only)');
-  }
-  return Object.entries(by).map(([trait, g]) => ({ trait, e: EFF[trait] || fallbackEffect(trait), lv: [1, 2, 3].map(n => ({ n, recipes: g[n] })) }))
-    .sort((a, b) => a.e.name.localeCompare(b.e.name));
-}
-function potionsPanel(el, items, empty, isDm) {
-  POT = items; POTEMPTY = empty; POTDM = !!isDm;
-  el.innerHTML = `<input id="psearch" class="${inp} mb-2" placeholder="Search potions… (try “hea”)" oninput="drawPotions()">
-    <p id="pcount" class="text-xs text-slate-500 mb-3"></p><div id="plist" class="grid md:grid-cols-2 gap-3"></div>`;
-  drawPotions();
-}
-function recipeHtml(r, label) {
-  if (!r.length) return `<p class="text-xs text-slate-600 mt-1">No combination possible with the current ingredients.</p>`;
-  const li = a => a.map(x => `<li>${esc(x)}</li>`).join('');
-  return `<p class="text-xs text-slate-500 mt-1">${label}</p>` + (r.length <= 3 ? `<ul class="text-xs text-slate-400 list-disc ml-4">${li(r)}</ul>`
-    : `<ul class="text-xs text-slate-400 list-disc ml-4">${li(r.slice(0, 3))}</ul><details class="text-xs text-slate-400 ml-4"><summary class="cursor-pointer text-amber-400">+${r.length - 3} more</summary><ul class="list-disc ml-4">${li(r.slice(3))}</ul></details>`);
-}
-function drawPotions() {
-  const q = ($('#psearch').value || '').trim().toLowerCase();
-  const list = POT.filter(p => {
-    if (!q) return true;
-    
-    // 1. Match Potion Name or Trait Name
-    const nameMatch = p.e.name.toLowerCase().includes(q) || p.trait.toLowerCase().includes(q);
-    
-    // 2. Match Effect Descriptions across Level 1, Level 2, and Level 3
-    const effectMatch = p.lv.some(l => {
-      const effectText = p.e['l' + l.n] || '';
-      return effectText.replace(/\*\*/g, '').toLowerCase().includes(q);
-    });
-
-    // 3. Match Ingredient Names in Recipes
-    const recipeMatch = p.lv.some(l => 
-      l.recipes.some(r => r.toLowerCase().includes(q))
-    );
-
-    return nameMatch || effectMatch || recipeMatch;
-  });
-
-  $('#pcount').textContent = list.length + ' of ' + POT.length + ' potions';
-  $('#plist').innerHTML = list.map(p => `<div class="${card}"><div class="font-semibold text-amber-200"><i class="fa-solid ${esc(p.e.icon)} mr-2"></i>${esc(p.e.name)} <span class="text-xs text-slate-500">${esc(p.trait)}</span></div>
-    ${p.lv.map(l => `<div class="mt-3"><div class="text-xs font-bold text-amber-400">LEVEL ${l.n} · ${POT_LV[l.n][0]} ·${POT_LV[l.n][1]}</div>
-      <p class="text-sm">${boldT(p.e['l' + l.n])}</p>${recipeHtml(l.recipes, POTDM ? 'Made with:' : 'You made it with:')}</div>`).join('')}</div>`).join('')
-    || `<p class="text-slate-500">${POT.length ? 'No potions match your search.' : esc(POTEMPTY)}</p>`;
-}
-function potView() {
-  const by = {}; (P.made || []).forEach(m => (by[m.trait] ??= []).push(m));
-  const items = Object.entries(by).map(([trait, rows]) => ({ trait, e: (P.effects || {})[trait] || fallbackEffect(trait),
-    lv: rows.sort((a, b) => a.level - b.level).map(r => ({ n: r.level, recipes: [r.a + ' + ' + r.b] })) })).sort((a, b) => a.e.name.localeCompare(b.e.name));
-  potionsPanel($('#pv'), items, "You haven't brewed any potions yet. Head to the Brewing Station!", false);
 }
 
 // ================= PLAYER SIDE =================
@@ -211,54 +221,81 @@ async function playerLogin() { creds = { u: $('#u').value.trim(), p: $('#p').val
 async function playerRefresh(fromLogin) {
   const { data, error } = await sb.rpc('p_state', { uname: creds.u, pass: creds.p });
   if (error) return fail(error);
-  if (!data) { sessionStorage.removeItem('pc'); creds = null; if (fromLogin) fail('Wrong username or campaign password.'); return loginView('player'); }
+  if (!data) return loginView('player');
   try { sessionStorage.setItem('pc', JSON.stringify(creds)); } catch (e) {}
   P = data; $('#who').innerHTML = `${esc(P.username)} · ${esc(P.campaign)} <button onclick="logout()" class="ml-2 underline">Log out</button>`;
   playerView(window.ptab || 'brew');
 }
+
 function playerView(tab) {
   window.ptab = tab;
   const t = (k, l) => `<button onclick="playerView('${k}')" class="${tab === k ? btn : btn2}">${l}</button>`;
   render(`<div class="flex gap-2 mb-5">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Potions')}</div><div id="pv"></div>`);
   tab === 'lib' ? libView() : tab === 'pot' ? potView() : brewView();
 }
+
 function libView() {
-  $('#pv').innerHTML = P.ingredients.length ? `<div class="grid md:grid-cols-2 gap-3">${P.ingredients.map(i => `<div class="${card}">
-    <div class="font-semibold text-amber-200"><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)} <span class="text-xs text-slate-500">${esc(i.rarity)} · ${esc(i.value)} gp · Search DC ${esc(i.search_dc)}</span></div>
-    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>
-    ${i.traits.map(t => t.name ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}. ${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>` : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}</div>`).join('')}</div>`
-    : `<p class="text-slate-500">You haven't learned any reagents yet. Ask your DM.</p>`;
+  const biomes = [...new Set(P.ingredients.map(i => i.biome).filter(Boolean))];
+  $('#pv').innerHTML = `<div class="mb-3 flex gap-2">
+    <select id="p_bio" class="${inp}" onchange="drawPlayerLib()"><option value="">All Biomes</option>${biomes.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
+  </div><div id="p_lib_list" class="grid md:grid-cols-2 gap-3"></div>`;
+  drawPlayerLib();
 }
+
+function drawPlayerLib() {
+  const b = $('#p_bio').value;
+  const filtered = P.ingredients.filter(i => !b || i.biome === b);
+  $('#p_lib_list').innerHTML = filtered.map(i => `<div class="${card}">
+    <div class="font-semibold text-amber-200 flex justify-between">
+      <span><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</span>
+      <span class="text-xs text-emerald-400 font-bold">In Stock: ${i.qty || 0}</span>
+    </div>
+    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>
+    ${i.traits.map(t => t.name ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}.${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>` : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
+    ${!i.traits[0].name ? `<button onclick="doTasteTest('${i.id}')" class="${btn2} text-xs mt-3 w-full"><i class="fa-solid fa-vial mr-1"></i> Taste Test (Raw Con Save DC 10)</button>` : ''}
+  </div>`).join('');
+}
+
+function doTasteTest(iid) {
+  render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
+    <h3 class="text-lg text-amber-200 font-bold">Taste Testing Reagent</h3>
+    <p class="text-xs text-slate-400">Notice: This roll ignores all Constitution modifiers and bonuses. Standard DC 10.</p>
+    <div id="dice_anim" class="text-4xl text-amber-400 py-4"><i class="fa-solid fa-dice-d20"></i></div>
+    <button onclick="rollTaste('${iid}')" class="${btn}">Roll Taste Check</button>
+  </div>`);
+}
+
+async function rollTaste(iid) {
+  $('#dice_anim').classList.add('animate-dice');
+  setTimeout(async () => {
+    const rawRoll = Math.floor(Math.random() * 20) + 1;
+    const { data } = await sb.rpc('p_taste_test', { uname: creds.u, pass: creds.p, iid, raw_d20_roll: rawRoll });
+    const { data: s } = await sb.rpc('p_state', { uname: creds.u, pass: creds.p }); if (s) P = s;
+    render(`<div class="${card} max-w-md mx-auto text-center space-y-3">
+      <h3 class="text-xl ${data.success ? 'text-emerald-300' : 'text-red-400'} font-bold">Rolled ${rawRoll} vs DC 10</h3>
+      <p class="text-sm">${data.success ? `Success! Learned Trait 1: <strong class="text-amber-300">${esc(data.trait)}</strong>` : `Failed Save! ${esc(data.effect)}`}</p>
+      <button onclick="playerView('lib')" class="${btn}">Back to Reagents</button>
+    </div>`);
+  }, 600);
+}
+
 function brewView() {
-  const opts = P.ingredients.map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('');
-  const slot = (id, def, allowed) => `<select id="${id}" class="${inp} mt-1">${allowed.map(x => `<option value="${x}" ${x === def ? 'selected' : ''}>Trait ${x + 1}</option>`).join('')}</select>`;
-  const l3 = P.master
-    ? `<div class="grid sm:grid-cols-2 gap-3"><div><span class="text-xs text-slate-400">Slot from #1</span>${slot('t1', 0, [0, 1, 2, 3])}</div><div><span class="text-xs text-slate-400">Slot from #2</span>${slot('t2', 0, [0, 1, 2, 3])}</div></div><p class="text-xs text-purple-300 mt-1"><i class="fa-solid fa-crown"></i> Master Alchemist: choose any slot on each reagent.</p>`
-    : `<div><span class="text-xs text-slate-400">Trait slot to extract (same slot on both reagents)</span>${slot('t1', 2, [2, 3])}</div>`;
-  $('#pv').innerHTML = P.ingredients.length < 2 ? `<p class="text-slate-500">You need to know at least 2 reagents to brew. Ask your DM.</p>` : `<div class="${card} space-y-3">
+  const opts = P.ingredients.filter(i => (i.qty || 0) > 0).map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${i.qty} in stock)</option>`).join('');
+  $('#pv').innerHTML = !opts ? `<p class="text-slate-500">You have no ingredients in stock. Ask your DM or go foraging!</p>` : `<div class="${card} space-y-3">
     <div class="grid sm:grid-cols-2 gap-3"><div><label class="text-xs text-slate-400">Reagent #1</label><select id="i1" class="${inp}">${opts}</select></div>
     <div><label class="text-xs text-slate-400">Reagent #2</label><select id="i2" class="${inp}">${opts}</select></div></div>
-    <div><label class="text-xs text-slate-400">Solvent</label><select id="sv" onchange="document.getElementById('l3').classList.toggle('hidden',this.value!=='3')" class="${inp}">
-      <option value="1">Level 1: Impure Water · DC 10 · Trait 1 · Minor potency</option><option value="2">Level 2: Pure Water · DC 13 · Trait 2 · Moderate potency</option><option value="3">Level 3: Pristine Water · DC 16 · Trait 3 or 4 · Greater potency</option></select></div>
-    <div id="l3" class="hidden">${l3}</div>
-    <button onclick="brew()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Brew</button></div><div id="res" class="mt-4"></div>`;
-  if ($('#i2')) $('#i2').selectedIndex = 1;
+    <div><label class="text-xs text-slate-400">Solvent</label><select id="sv" class="${inp}"><option value="1">Level 1: Impure Water</option><option value="2">Level 2: Pure Water</option><option value="3">Level 3: Pristine Water</option></select></div>
+    <button onclick="brew()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Brew Potion</button></div><div id="res" class="mt-4"></div>`;
 }
+
 async function brew() {
-  const sv = +$('#sv').value, a = +$('#t1').value, b = $('#t2') ? +$('#t2').value : a;
-  const { data, error } = await sb.rpc('p_brew', { uname: creds.u, pass: creds.p, ing1: $('#i1').value, ing2: $('#i2').value, solvent: sv, idx1: a, idx2: b });
+  const sv = +$('#sv').value;
+  const { data, error } = await sb.rpc('p_brew', { uname: creds.u, pass: creds.p, ing1: $('#i1').value, ing2: $('#i2').value, solvent: sv, idx1: 0, idx2: 0 });
   if (error) return fail(error);
-  const dc = [0, 10, 13, 16][sv];
-  if (data.ok) {
-    const e = data.effect || fallbackEffect(data.trait);
-    $('#res').innerHTML = `<div class="border-2 border-emerald-500/70 bg-emerald-950/40 rounded-2xl p-5"><div class="text-xs text-emerald-400 font-bold">SUCCESSFUL BREW · ${POT_LV[sv][0].toUpperCase()} POTENCY · Crafting check ${POT_LV[sv][1]}</div>
-      <h3 class="text-2xl text-emerald-200 my-1"><i class="fa-solid ${esc(e.icon)} mr-2"></i>${esc(e.name)}</h3>
-      <p class="text-sm">${boldT(e['l' + sv])}</p><p class="text-xs text-slate-400 mt-3">${esc(data.a)} and ${esc(data.b)} share <strong class="text-amber-300">${esc(data.trait)}</strong>. Recorded in your reagent notes and Potions tab.</p></div>`;
-    const { data: s } = await sb.rpc('p_state', { uname: creds.u, pass: creds.p }); if (s) P = s;
-  } else {
-    $('#res').innerHTML = `<div class="border-2 border-red-500/70 bg-red-950/40 rounded-2xl p-5"><div class="text-xs text-red-400 font-bold">REAGENTS MISMATCH · Crafting check DC ${dc}</div>
-      <h3 class="text-2xl text-red-200 my-1">Foul Sludge</h3><p class="text-sm">The traits you extracted failed to bind. Deals 1d4 acid damage if swallowed or thrown.</p></div>`;
-  }
+  const { data: s } = await sb.rpc('p_state', { uname: creds.u, pass: creds.p }); if (s) P = s;
+  brewView();
+  $('#res').innerHTML = data.ok ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Success! Brewed ${esc(data.trait)}. 1 unit deducted from both reagents.</div>`
+    : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">Mismatch! Produced Foul Sludge. 1 unit deducted from both reagents.</div>`;
 }
 </script>
 </body>
