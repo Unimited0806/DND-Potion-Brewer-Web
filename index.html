@@ -79,10 +79,13 @@ async function boot() {
 function loginView(tab) {
   const tabBtn = (t, l) => `<button onclick="loginView('${t}')" class="${t===tab?btn:btn2} flex-1">${l}</button>`;
   render(`<div class="${card} max-w-sm mx-auto space-y-3 mt-12">
-    <div class="flex gap-2">${tabBtn('player','Player')}${tabBtn('dm','Dungeon Master')}</div>${tab==='player' ? `
+    <div class="flex gap-2">${tabBtn('player','Join Campaign')}${tabBtn('create','Create Player')}${tabBtn('dm','DM')}</div>${tab==='player' || tab==='create' ? `
       <input id="u" class="${inp}" placeholder="Username" autocomplete="username">
       <input id="p" type="password" class="${inp}" placeholder="Campaign password" autocomplete="current-password">
-      <button onclick="playerLogin()" class="${btn} w-full">Enter Laboratory</button>` : `
+      ${tab==='player'
+        ? `<button onclick="playerLogin()" class="${btn} w-full">Enter Laboratory</button>`
+        : `<p class="text-xs text-slate-400">Your DM must approve your request before you can join.</p>
+           <button onclick="playerRequest()" class="${btn} w-full">Request to Join</button>`}` : `
       <input id="e" type="email" class="${inp}" placeholder="DM email">
       <input id="p" type="password" class="${inp}" placeholder="Password">
       <div class="flex gap-2"><button onclick="dmLogin()" class="${btn} flex-1">Sign in</button><button onclick="dmSignup()" class="${btn2} flex-1">Create DM account</button></div>`}
@@ -121,6 +124,9 @@ function dmHome() {
       render(`<div class="${card} max-w-md mx-auto text-center space-y-3"><p class="text-red-400 text-sm">Error loading campaigns: ${esc(error.message)}</p><button onclick="logout()" class="${btn}">Log out &amp; retry</button></div>`);
       return;
     }
+    const { data: pend } = await withTimeout(sb.from('join_requests').select('campaign_id').eq('status', 'pending'));
+    const pending = {};
+    (pend || []).forEach(r => { pending[r.campaign_id] = (pending[r.campaign_id] || 0) + 1; });
     render(`
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-xl text-amber-200">Your Campaigns (${cs.length}/5)</h2>
@@ -129,7 +135,7 @@ function dmHome() {
       ${cs.length ? '' : '<p class="text-sm text-slate-500 mb-3">No campaigns yet. Create one to get started.</p>'}
       <div class="grid sm:grid-cols-2 gap-3 mb-6">${cs.map(c => `
         <div onclick="openCampaign('${c.id}')" class="${card} cursor-pointer hover:border-amber-500 flex justify-between items-center">
-          <div class="font-bold text-amber-200"><i class="fa-solid fa-book-skull mr-2 text-amber-400"></i>${esc(c.name)}</div>
+          <div class="font-bold text-amber-200"><i class="fa-solid fa-book-skull mr-2 text-amber-400"></i>${esc(c.name)}${pending[c.id] ? ` <span class="ml-2 text-[10px] bg-amber-500 text-slate-950 rounded-full px-2 py-0.5">${pending[c.id]} pending</span>` : ''}</div>
           <i class="fa-solid fa-chevron-right text-slate-500"></i>
         </div>`).join('')}</div>
       <div id="dm_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>`);
@@ -171,9 +177,10 @@ function openCampaign(id) {
   return guard(async () => {
     const { data: c, error: errC } = await withTimeout(sb.from('campaigns').select('id, name, password').eq('id', id).single());
     if (errC) { dmHome(); throw errC; }
-    const [{ data: ps, error: errP }, { data: logs, error: errL }] = await Promise.all([
+    const [{ data: ps, error: errP }, { data: logs, error: errL }, { data: reqs, error: errR }] = await Promise.all([
       withTimeout(sb.from('players').select('*').eq('campaign_id', id).order('username')),
-      withTimeout(sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false }))
+      withTimeout(sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false })),
+      withTimeout(sb.from('join_requests').select('*').eq('campaign_id', id).eq('status', 'pending').order('created_at'))
     ]);
     render(`<div class="flex gap-2 mb-3">
         <button onclick="dmHome()" class="${btn2}"><i class="fa-solid fa-arrow-left"></i> All Campaigns</button>
@@ -182,6 +189,13 @@ function openCampaign(id) {
       <div class="flex justify-between items-end mb-3">
         <h2 class="text-xl text-amber-200">${esc(c.name)} Overview</h2>
         <div class="text-xs text-slate-400">Join Password: <strong class="text-amber-100">${esc(c.password)}</strong></div>
+      </div>
+      <div class="${card} space-y-2 mb-4">
+        <h3 class="text-sm font-bold text-amber-300">Join Requests</h3>
+        ${errR ? panelErr(errR) : (reqs && reqs.length) ? reqs.map(r => `<div class="p-2 bg-slate-950 rounded text-xs flex justify-between items-center">
+          <span class="font-bold text-amber-200">${esc(r.username)}</span>
+          <span class="flex gap-2"><button onclick="reviewRequest('${r.id}', true)" class="${btn} text-xs">Accept</button><button onclick="reviewRequest('${r.id}', false)" class="${btn2} text-xs">Deny</button></span></div>`).join('')
+          : '<p class="text-xs text-slate-500">No pending requests.</p>'}
       </div>
       <div class="grid md:grid-cols-2 gap-4">
         <div class="${card} space-y-2">
@@ -200,19 +214,44 @@ function openCampaign(id) {
   });
 }
 
+function reviewRequest(rid, approve) {
+  return guard(async () => {
+    await rpc('dm_review_request', { req_id: rid, approve });
+    openCampaign(dm.cid);
+  });
+}
+
 // ================= PLAYER SIDE =================
 function playerLogin() {
   creds = { u: $('#u').value.trim(), p: $('#p').value };
   return guard(() => playerRefresh(true));
 }
 
+function playerRequest() {
+  const u = $('#u').value.trim(), p = $('#p').value;
+  if (!u || !p) return alert('Enter a username and the campaign password.');
+  return guard(async () => {
+    const r = await rpc('p_request_join', { uname: u, campaign_pass: p });
+    if (!r.ok) return alert(r.error);
+    alert('Request sent! Once your DM accepts it, use "Join Campaign" to log in.');
+    loginView('player');
+  });
+}
+
 // Loads state into P without touching the screen (returns false on bad login)
 async function loadState(fromLogin) {
+  const c = creds;
   const data = await rpc('p_state', pc());
   if (!data) {
     sessionStorage.removeItem('pc'); creds = null;
     loginView('player');
-    if (fromLogin) alert('Wrong username or campaign password.');
+    if (fromLogin) {
+      let s = 'none';
+      try { s = await rpc('p_request_status', { uname: c.u, campaign_pass: c.p }); } catch (e) {}
+      alert(s === 'pending' ? 'Your request is still waiting for the DM to approve it.'
+        : s === 'denied' ? 'The DM denied your request to join this campaign.'
+        : 'Wrong username or campaign password. New here? Use "Create Player" first.');
+    }
     return false;
   }
   try { sessionStorage.setItem('pc', JSON.stringify(creds)); } catch (e) {}
