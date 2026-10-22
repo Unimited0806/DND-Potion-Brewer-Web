@@ -123,11 +123,9 @@ function drawPlayerLib() {
   </div>`).join('');
 }
 
-// ================= REAGENT ACQUISITION MODAL =================
 function openAddReagentModal() {
   const modal = $('#add_modal');
   modal.classList.remove('hidden');
-  
   const knownIds = new Set(P.ingredients.map(x => x.id));
   const unlearned = (P.all_ingredients || []).filter(x => !knownIds.has(x.id));
 
@@ -177,50 +175,6 @@ async function actionPurchase(iid) {
   if (error) return fail(error);
   await playerRefresh();
   playerView('lib');
-}
-
-// ================= DM SIDE & DM ACTIONS =================
-async function dmHome(tab) {
-  $('#who').innerHTML = `DM <button onclick="logout()" class="ml-2 underline">Log out</button>`;
-  if (!ING.length) {
-    const { data } = await sb.from('ingredients').select('id,data');
-    ING = data.map(r => r.data).sort((a,b) => a.name.localeCompare(b.name));
-    const ef = await sb.from('effects').select('trait,data');
-    EFF = Object.fromEntries((ef.data || []).map(r => [r.trait, r.data]));
-  }
-  const tabs = `<div class="flex gap-2 mb-5">
-    <button onclick="dmHome()" class="${!tab ? btn : btn2}">Campaigns</button>
-    <button onclick="dmHome('potions')" class="${tab === 'potions' ? btn : btn2}">Potion Index</button>
-  </div>`;
-
-  const { data: cs } = await sb.from('campaigns').select('id,name').order('created_at');
-  render(tabs + `<h2 class="text-xl text-amber-200 mb-3">Your Campaigns (${cs.length}/5)</h2>
-    <div class="grid sm:grid-cols-2 gap-3 mb-6">${cs.map(c => `<button onclick="openCampaign('${c.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-book-skull text-amber-400 mr-2"></i>${esc(c.name)}</button>`).join('')}</div>`);
-}
-
-async function openCampaign(id) {
-  dm.cid = id;
-  const [{ data: c }, { data: ps }, { data: logs }] = await Promise.all([
-    sb.from('campaigns').select('id, name, password').eq('id', id).single(),
-    sb.from('players').select('*').eq('campaign_id', id).order('username'),
-    sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false })
-  ]);
-  render(`<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaigns</button>
-    <h2 class="text-xl text-amber-200 mb-3">${esc(c.name)} Overview</h2>
-    <div class="${card} space-y-2 max-h-[400px] overflow-y-auto">
-      <h3 class="text-sm font-bold text-amber-300">Activity Log</h3>
-      ${(logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span>${esc(l.details)}</div>`).join('') : '<p class="text-xs text-slate-500">No logs.</p>'}
-    </div>`);
-}
-
-async function editQtyPrompt(iid, curQty) {
-  const val = prompt("Set custom inventory quantity for this ingredient:", curQty);
-  if (val === null) return;
-  const newQty = parseInt(val);
-  if (isNaN(newQty)) return;
-  const { error } = await sb.rpc('p_set_qty', { uname: creds.u, pass: creds.p, iid, new_qty: newQty });
-  if (error) return fail(error);
-  await playerRefresh();
 }
 
 function forageInteractive(iid) {
@@ -286,12 +240,61 @@ async function runForageD4(iid, originalD20) {
   setTimeout(async () => {
     $('#d4_icon').classList.remove('animate-dice');
     const d4 = Math.floor(Math.random() * 4) + 1;
-    await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: originalD20, d4_yield: d4 });
+    
+    // Call RPC to save yield
+    const { data, error } = await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: originalD20, d4_yield: d4 });
+    if (error) return fail(error);
+    
+    // Explicitly refresh state so inventory updates immediately
     await playerRefresh();
 
     $('#d4_status').innerHTML = `<span class="text-emerald-300 font-bold text-base">Harvested +${d4} units!</span>`;
     $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn} w-full mt-3">Back to Reagents</button>`;
   }, 600);
+}
+
+// ================= DM SIDE =================
+async function dmHome(tab) {
+  $('#who').innerHTML = `DM <button onclick="logout()" class="ml-2 underline">Log out</button>`;
+  if (!ING.length) {
+    const { data } = await sb.from('ingredients').select('id,data');
+    ING = data.map(r => r.data).sort((a,b) => a.name.localeCompare(b.name));
+    const ef = await sb.from('effects').select('trait,data');
+    EFF = Object.fromEntries((ef.data || []).map(r => [r.trait, r.data]));
+  }
+  const tabs = `<div class="flex gap-2 mb-5">
+    <button onclick="dmHome()" class="${!tab ? btn : btn2}">Campaigns</button>
+    <button onclick="dmHome('potions')" class="${tab === 'potions' ? btn : btn2}">Potion Index</button>
+  </div>`;
+
+  const { data: cs } = await sb.from('campaigns').select('id,name').order('created_at');
+  render(tabs + `<h2 class="text-xl text-amber-200 mb-3">Your Campaigns (${cs.length}/5)</h2>
+    <div class="grid sm:grid-cols-2 gap-3 mb-6">${cs.map(c => `<button onclick="openCampaign('${c.id}')" class="${card} text-left hover:border-amber-500"><i class="fa-solid fa-book-skull text-amber-400 mr-2"></i>${esc(c.name)}</button>`).join('')}</div>`);
+}
+
+async function openCampaign(id) {
+  dm.cid = id;
+  const [{ data: c }, { data: ps }, { data: logs }] = await Promise.all([
+    sb.from('campaigns').select('id, name, password').eq('id', id).single(),
+    sb.from('players').select('*').eq('campaign_id', id).order('username'),
+    sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false })
+  ]);
+  render(`<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> Campaigns</button>
+    <h2 class="text-xl text-amber-200 mb-3">${esc(c.name)} Overview</h2>
+    <div class="${card} space-y-2 max-h-[400px] overflow-y-auto">
+      <h3 class="text-sm font-bold text-amber-300">Activity Log</h3>
+      ${(logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span>${esc(l.details)}</div>`).join('') : '<p class="text-xs text-slate-500">No logs.</p>'}
+    </div>`);
+}
+
+async function editQtyPrompt(iid, curQty) {
+  const val = prompt("Set custom inventory quantity for this ingredient:", curQty);
+  if (val === null) return;
+  const newQty = parseInt(val);
+  if (isNaN(newQty)) return;
+  const { error } = await sb.rpc('p_set_qty', { uname: creds.u, pass: creds.p, iid, new_qty: newQty });
+  if (error) return fail(error);
+  await playerRefresh();
 }
 
 function doTasteTest(iid) {
