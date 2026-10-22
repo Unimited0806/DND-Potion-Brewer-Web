@@ -27,34 +27,58 @@
 const SUPABASE_URL = "https://ratnpbutyevultkjlfxw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_15LGzTrmo_CmKNR3gbgHDQ_GUWwHLvP";
 
+// ================= HELPERS =================
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const btn = 'px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-semibold text-sm hover:bg-amber-400';
 const btn2 = 'px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 text-sm hover:border-amber-500';
 const inp = 'bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:border-amber-500';
 const card = 'bg-slate-900/60 border border-slate-800 rounded-2xl p-4';
-const render = h => { $('#app').innerHTML = h; };
-const fail = e => alert(e && e.message ? e.message : e);
-let sb, ING = [], EFF = {}, P = null, creds = null, dm = {};
+const render = h => { const el = $('#app'); if (el) el.innerHTML = h; };
+const fail = e => alert((e && e.message) || e);
+const guard = f => Promise.resolve().then(f).catch(fail);           // run an async action, alert on error
+const d = n => Math.floor(Math.random() * n) + 1;                   // roll a die
+const withTimeout = (p, ms = 10000) => Promise.race([p, new Promise((_, rej) =>
+  setTimeout(() => rej(new Error('Request timed out. Is the Supabase project paused?')), ms))]);
+const rpc = async (fn, args) => { const { data, error } = await withTimeout(sb.rpc(fn, args)); if (error) throw error; return data; };
+const pc = () => ({ uname: creds.u, pass: creds.p });
+const ingById = id => (P.all_ingredients || []).find(x => x.id === id) || P.ingredients.find(x => x.id === id) || { name: 'Reagent', rarity: 'common' };
+const forageDC = ing => {
+  const dc = { common: 8, uncommon: 12, rare: 14, 'extremely rare': 16, 'ext-rare': 16 }[(ing.rarity || 'common').toLowerCase()] ?? 8;
+  return P.master ? dc - 4 : dc;
+};
+const panelErr = e => `<p class="text-xs text-red-400">Could not load: ${esc(e.message)}</p>`;
+const backBtn = (fn, label) => `<button onclick="${fn}" class="${btn} w-full mt-3">${label}</button>`;
 
-if (SUPABASE_URL.startsWith('PASTE')) {
-  render(`<div class="${card}">Open <code>index.html</code> and paste your Supabase URL and anon key.</div>`);
-} else {
-  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  boot();
+let sb, P = null, creds = null, dm = {};
+
+// Any uncaught error is shown on screen instead of leaving a blank page
+function showFatal(m) {
+  render(`<div class="${card} max-w-md mx-auto text-center space-y-3">
+    <p class="text-red-400 text-sm">Something broke: ${esc(m)}</p>
+    <button onclick="location.reload()" class="${btn}">Reload</button></div>`);
 }
+window.addEventListener('error', e => showFatal(e.message));
+window.addEventListener('unhandledrejection', e => showFatal((e.reason && e.reason.message) || e.reason));
 
+// ================= BOOT / LOGIN =================
 async function boot() {
-  const { data } = await sb.auth.getSession();
-  if (data.session) return dmHome();
-  try { const c = JSON.parse(sessionStorage.getItem('pc')); if (c) { creds = c; return playerRefresh(); } } catch (e) {}
+  try {
+    const { data } = await withTimeout(sb.auth.getSession());
+    if (data.session) {
+      const { error } = await withTimeout(sb.auth.getUser());   // make sure the session is still valid
+      if (!error) return dmHome();
+      await sb.auth.signOut();
+    }
+    const c = JSON.parse(sessionStorage.getItem('pc') || 'null');
+    if (c) { creds = c; return playerRefresh(); }
+  } catch (e) { console.error('Boot error:', e); }
   loginView('player');
 }
 
-// ================= LOGIN =================
 function loginView(tab) {
   const tabBtn = (t, l) => `<button onclick="loginView('${t}')" class="${t===tab?btn:btn2} flex-1">${l}</button>`;
-  render(`<div class="${card} max-w-sm mx-auto space-y-3">
+  render(`<div class="${card} max-w-sm mx-auto space-y-3 mt-12">
     <div class="flex gap-2">${tabBtn('player','Player')}${tabBtn('dm','Dungeon Master')}</div>${tab==='player' ? `
       <input id="u" class="${inp}" placeholder="Username" autocomplete="username">
       <input id="p" type="password" class="${inp}" placeholder="Campaign password" autocomplete="current-password">
@@ -64,105 +88,140 @@ function loginView(tab) {
       <div class="flex gap-2"><button onclick="dmLogin()" class="${btn} flex-1">Sign in</button><button onclick="dmSignup()" class="${btn2} flex-1">Create DM account</button></div>`}
   </div>`);
 }
-async function dmLogin() { const { error } = await sb.auth.signInWithPassword({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : dmHome(); }
-async function dmSignup() { const { error } = await sb.auth.signUp({ email: $('#e').value, password: $('#p').value }); error ? fail(error) : alert('Account created.'); }
-async function logout() { if (!creds) await sb.auth.signOut(); sessionStorage.removeItem('pc'); creds = null; $('#who').textContent = ''; loginView('player'); }
+
+function dmLogin() {
+  return guard(async () => {
+    const { error } = await sb.auth.signInWithPassword({ email: $('#e').value.trim(), password: $('#p').value });
+    if (error) throw error;
+    dmHome();
+  });
+}
+function dmSignup() {
+  return guard(async () => {
+    const { error } = await sb.auth.signUp({ email: $('#e').value.trim(), password: $('#p').value });
+    if (error) throw error;
+    alert('Account created. If email confirmation is enabled, confirm your email before signing in.');
+  });
+}
+async function logout() {
+  try { if (!creds) await sb.auth.signOut(); } catch (e) {}
+  sessionStorage.removeItem('pc');
+  creds = null; P = null; window.ptab = null;
+  $('#who').textContent = '';
+  loginView('player');
+}
 
 // ================= DM SIDE =================
-async function dmHome(tab) {
+function dmHome() {
   $('#who').innerHTML = `DM <button onclick="logout()" class="ml-2 underline">Log out</button>`;
-  const { data: cs, error } = await sb.from('campaigns').select('id, name').order('created_at');
-  if (error) return fail(error);
-
-  render(`
-    <div class="flex justify-between items-center mb-3">
-      <h2 class="text-xl text-amber-200">Your Campaigns (${cs ? cs.length : 0}/5)</h2>
-      <button onclick="openCreateCampaignModal()" class="${btn}"><i class="fa-solid fa-plus mr-1"></i> New Campaign</button>
-    </div>
-    
-    <div class="grid sm:grid-cols-2 gap-3 mb-6">${(cs || []).map(c => `
-      <div onclick="openCampaign('${c.id}')" class="${card} cursor-pointer hover:border-amber-500 flex justify-between items-center">
-        <div>
+  render('<p class="text-sm text-slate-400">Loading campaigns…</p>');
+  return guard(async () => {
+    const { data: cs, error } = await withTimeout(sb.from('campaigns').select('id, name').order('created_at'));
+    if (error) {
+      render(`<div class="${card} max-w-md mx-auto text-center space-y-3"><p class="text-red-400 text-sm">Error loading campaigns: ${esc(error.message)}</p><button onclick="logout()" class="${btn}">Log out &amp; retry</button></div>`);
+      return;
+    }
+    render(`
+      <div class="flex justify-between items-center mb-3">
+        <h2 class="text-xl text-amber-200">Your Campaigns (${cs.length}/5)</h2>
+        <button onclick="openCreateCampaignModal()" class="${btn}"><i class="fa-solid fa-plus mr-1"></i> New Campaign</button>
+      </div>
+      ${cs.length ? '' : '<p class="text-sm text-slate-500 mb-3">No campaigns yet. Create one to get started.</p>'}
+      <div class="grid sm:grid-cols-2 gap-3 mb-6">${cs.map(c => `
+        <div onclick="openCampaign('${c.id}')" class="${card} cursor-pointer hover:border-amber-500 flex justify-between items-center">
           <div class="font-bold text-amber-200"><i class="fa-solid fa-book-skull mr-2 text-amber-400"></i>${esc(c.name)}</div>
-        </div>
-        <i class="fa-solid fa-chevron-right text-slate-500"></i>
-      </div>`).join('')}</div>
-      
-    <div id="dm_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>
-  `);
+          <i class="fa-solid fa-chevron-right text-slate-500"></i>
+        </div>`).join('')}</div>
+      <div id="dm_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>`);
+  });
 }
 
 function openCreateCampaignModal() {
-  $('#dm_modal').classList.remove('hidden');
-  $('#dm_modal').innerHTML = `
+  const m = $('#dm_modal');
+  if (!m) return;
+  m.classList.remove('hidden');
+  m.innerHTML = `
     <div class="${card} max-w-sm w-full space-y-4">
       <div class="flex justify-between items-center border-b border-slate-800 pb-2">
         <h3 class="text-base font-bold text-amber-300">Create New Campaign</h3>
         <button onclick="$('#dm_modal').classList.add('hidden')" class="text-slate-400 hover:text-slate-200"><i class="fa-solid fa-xmark text-lg"></i></button>
       </div>
-      <div>
-        <label class="text-xs text-slate-400">Campaign Name</label>
-        <input id="new_camp_name" class="${inp} mt-1" placeholder="e.g. Shadows of Second Chance">
-      </div>
-      <div>
-        <label class="text-xs text-slate-400">Join Password (for players)</label>
-        <input id="new_camp_pass" class="${inp} mt-1" placeholder="e.g. secret123">
-      </div>
+      <div><label class="text-xs text-slate-400">Campaign Name</label>
+        <input id="new_camp_name" class="${inp} mt-1" placeholder="e.g. Shadows of Second Chance"></div>
+      <div><label class="text-xs text-slate-400">Join Password (for players)</label>
+        <input id="new_camp_pass" class="${inp} mt-1" placeholder="e.g. secret123"></div>
       <button onclick="createNewCampaign()" class="${btn} w-full mt-2">Create Campaign</button>
-    </div>
-  `;
+    </div>`;
 }
 
-async function createNewCampaign() {
+function createNewCampaign() {
   const name = $('#new_camp_name').value.trim();
   const pass = $('#new_camp_pass').value.trim();
-  
-  if (!name || !pass) return alert("Please provide both a name and a join password.");
-
-  const { error } = await sb.rpc('dm_create_campaign', { c_name: name, c_pass: pass });
-  if (error) return fail(error);
-  
-  $('#dm_modal').classList.add('hidden');
-  dmHome(); // Refresh the list
+  if (!name || !pass) return alert('Please provide both a name and a join password.');
+  return guard(async () => {
+    await rpc('dm_create_campaign', { c_name: name, c_pass: pass });
+    $('#dm_modal').classList.add('hidden');
+    dmHome();
+  });
 }
 
-async function openCampaign(id) {
+function openCampaign(id) {
   dm.cid = id;
-  const { data: c, error: errC } = await sb.from('campaigns').select('id, name, password').eq('id', id).single();
-  if (errC) return fail(errC);
-
-  const { data: ps } = await sb.from('players').select('*').eq('campaign_id', id).order('username');
-  const { data: logs } = await sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false });
-
-  render(`<button onclick="dmHome()" class="${btn2} mb-3"><i class="fa-solid fa-arrow-left"></i> All Campaigns</button>
-    <div class="flex justify-between items-end mb-3">
+  render('<p class="text-sm text-slate-400">Loading…</p>');
+  return guard(async () => {
+    const { data: c, error: errC } = await withTimeout(sb.from('campaigns').select('id, name, password').eq('id', id).single());
+    if (errC) { dmHome(); throw errC; }
+    const [{ data: ps, error: errP }, { data: logs, error: errL }] = await Promise.all([
+      withTimeout(sb.from('players').select('*').eq('campaign_id', id).order('username')),
+      withTimeout(sb.from('activity_logs').select('*').eq('campaign_id', id).order('created_at', { ascending: false }))
+    ]);
+    render(`<div class="flex gap-2 mb-3">
+        <button onclick="dmHome()" class="${btn2}"><i class="fa-solid fa-arrow-left"></i> All Campaigns</button>
+        <button onclick="openCampaign('${esc(id)}')" class="${btn2}"><i class="fa-solid fa-rotate mr-1"></i> Refresh</button>
+      </div>
+      <div class="flex justify-between items-end mb-3">
         <h2 class="text-xl text-amber-200">${esc(c.name)} Overview</h2>
         <div class="text-xs text-slate-400">Join Password: <strong class="text-amber-100">${esc(c.password)}</strong></div>
-    </div>
-    <div class="grid md:grid-cols-2 gap-4">
-      <div class="${card} space-y-2">
-        <h3 class="text-sm font-bold text-amber-300">Players</h3>
-        ${(ps && ps.length) ? ps.map(p => `<div class="p-2 bg-slate-950 rounded text-xs flex justify-between">
-          <span class="font-bold text-amber-200">${esc(p.username)}</span>
-          <span class="text-slate-400">Bonus: +${p.foraging_bonus || 0}</span>
-        </div>`).join('') : '<p class="text-xs text-slate-500">No players yet. Give them your join password to connect!</p>'}
       </div>
-      <div class="${card} space-y-2 max-h-[400px] overflow-y-auto">
-        <h3 class="text-sm font-bold text-amber-300">Activity Log</h3>
-        ${(logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span> ${esc(l.details)}</div>`).join('') : '<p class="text-xs text-slate-500">No logs yet.</p>'}
-      </div>
-    </div>`);
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="${card} space-y-2">
+          <h3 class="text-sm font-bold text-amber-300">Players</h3>
+          ${errP ? panelErr(errP) : (ps && ps.length) ? ps.map(p => `<div class="p-2 bg-slate-950 rounded text-xs flex justify-between">
+            <span class="font-bold text-amber-200">${esc(p.username)}</span>
+            <span class="text-slate-400">Bonus: +${p.foraging_bonus || 0}</span></div>`).join('')
+            : '<p class="text-xs text-slate-500">No players yet. Give them your join password to connect!</p>'}
+        </div>
+        <div class="${card} space-y-2 max-h-[400px] overflow-y-auto">
+          <h3 class="text-sm font-bold text-amber-300">Activity Log</h3>
+          ${errL ? panelErr(errL) : (logs && logs.length) ? logs.map(l => `<div class="p-2 bg-slate-950 rounded text-xs"><span class="font-bold text-amber-200">${esc(l.username)}:</span> ${esc(l.details)}</div>`).join('')
+            : '<p class="text-xs text-slate-500">No logs yet.</p>'}
+        </div>
+      </div>`);
+  });
 }
 
 // ================= PLAYER SIDE =================
-async function playerLogin() { creds = { u: $('#u').value.trim(), p: $('#p').value }; await playerRefresh(true); }
-async function playerRefresh(fromLogin) {
-  const { data, error } = await sb.rpc('p_state', { uname: creds.u, pass: creds.p });
-  if (error) return fail(error);
-  if (!data) return loginView('player');
+function playerLogin() {
+  creds = { u: $('#u').value.trim(), p: $('#p').value };
+  return guard(() => playerRefresh(true));
+}
+
+// Loads state into P without touching the screen (returns false on bad login)
+async function loadState(fromLogin) {
+  const data = await rpc('p_state', pc());
+  if (!data) {
+    sessionStorage.removeItem('pc'); creds = null;
+    loginView('player');
+    if (fromLogin) alert('Wrong username or campaign password.');
+    return false;
+  }
   try { sessionStorage.setItem('pc', JSON.stringify(creds)); } catch (e) {}
-  P = data; $('#who').innerHTML = `${esc(P.username)} ·${esc(P.campaign)} <button onclick="logout()" class="ml-2 underline">Log out</button>`;
-  playerView(window.ptab || 'lib');
+  P = data;
+  $('#who').innerHTML = `${esc(P.username)} · ${esc(P.campaign)} <button onclick="logout()" class="ml-2 underline">Log out</button>`;
+  return true;
+}
+async function playerRefresh(fromLogin) {
+  if (await loadState(fromLogin)) playerView(window.ptab || 'lib');
 }
 
 function playerView(tab) {
@@ -172,40 +231,37 @@ function playerView(tab) {
     <div class="flex gap-2">${t('brew', 'Brewing Station')}${t('lib', 'My Reagents')}${t('pot', 'Potions')}</div>
     <div>${t('options', 'Options')}</div>
   </div><div id="pv"></div>`);
-  tab === 'lib' ? libView() : tab === 'options' ? optionsView() : tab === 'pot' ? potView() : brewView();
+  ({ lib: libView, options: optionsView, pot: potView }[tab] || brewView)();
 }
 
 function libView() {
   const biomes = [...new Set(P.ingredients.map(i => i.biome).filter(Boolean))];
   $('#pv').innerHTML = `
     <div class="mb-4 flex flex-wrap gap-2 justify-between items-center bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-      <select id="p_bio" class="${inp} max-w-xs" onchange="drawPlayerLib()"><option value="">All Biomes</option>${biomes.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
+      <select id="p_bio" class="${inp} max-w-xs" onchange="drawPlayerLib()"><option value="">All Biomes</option>${biomes.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
       <button onclick="openAddReagentModal()" class="${btn}"><i class="fa-solid fa-plus-circle mr-1"></i> Click here to add more</button>
     </div>
     <div id="p_lib_list" class="grid md:grid-cols-2 gap-3"></div>
-    <div id="add_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>
-  `;
+    <div id="add_modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"></div>`;
   drawPlayerLib();
 }
 
 function drawPlayerLib() {
   const b = $('#p_bio').value;
   const filtered = P.ingredients.filter(i => (!b || i.biome === b) && (i.qty || 0) > 0);
-  
   if (!filtered.length) {
     $('#p_lib_list').innerHTML = `<p class="text-sm text-slate-500">No reagents in stock for this biome. Forage or acquire more.</p>`;
     return;
   }
-  
   $('#p_lib_list').innerHTML = filtered.map(i => `<div class="${card} relative">
     <div class="font-semibold text-amber-200 flex justify-between items-start">
       <span><i class="fa-solid ${esc(i.icon)} mr-2"></i>${esc(i.name)}</span>
-      <button onclick="editQtyPrompt('${i.id}',${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">
-        (Click to edit) In Stock: ${i.qty || 0}
-      </button>
+      <button onclick="editQtyPrompt('${i.id}', ${i.qty || 0})" class="text-xs text-emerald-400 hover:underline font-bold">(Click to edit) In Stock: ${i.qty || 0}</button>
     </div>
-    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>${i.traits.map(t => t.name ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}.${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>` : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
-    
+    <div class="text-xs text-slate-400 mb-2">${esc(i.biome)} — ${esc(i.location)}</div>
+    ${i.traits.map(t => t.name
+      ? `<div class="text-sm"><span class="text-amber-300">${t.i + 1}. ${esc(t.name)}</span> <span class="text-slate-400">${esc(t.desc)}</span></div>`
+      : `<div class="text-sm text-slate-600">${t.i + 1}. ???</div>`).join('')}
     <div class="mt-3 pt-3 border-t border-slate-800/80 flex gap-2">
       ${!i.traits[0].name ? `<button onclick="doTasteTest('${i.id}')" class="${btn2} text-xs flex-1"><i class="fa-solid fa-vial mr-1"></i> Taste Test</button>` : ''}
       <button onclick="forageInteractive('${i.id}')" class="${btn} text-xs flex-1"><i class="fa-solid fa-seedling mr-1"></i> Forage For More</button>
@@ -218,35 +274,30 @@ function doTasteTest(iid) {
     <h3 class="text-lg text-amber-200 font-bold">Taste Testing Reagent</h3>
     <p class="text-xs text-slate-400">Notice: This roll ignores all Constitution modifiers and bonuses. Standard DC 10.<br><strong>1 unit will be consumed.</strong></p>
     <div id="dice_anim" class="text-4xl text-amber-400 py-4"><i class="fa-solid fa-dice-d20"></i></div>
-    <button onclick="rollTaste('${iid}')" class="${btn}">Roll Taste Check</button>
+    <button id="taste_btn" onclick="rollTaste('${iid}')" class="${btn}">Roll Taste Check</button>
   </div>`);
 }
 
-async function rollTaste(iid) {
+function rollTaste(iid) {
   $('#dice_anim').classList.add('animate-dice');
-  setTimeout(async () => {
-    const rawRoll = Math.floor(Math.random() * 20) + 1;
-    const { data, error } = await sb.rpc('p_taste_test', { uname: creds.u, pass: creds.p, iid, raw_d20_roll: rawRoll });
-    
-    if (error) return fail(error);
-    
-    // Refresh to deduct stock immediately
-    await playerRefresh();
-
+  $('#taste_btn').disabled = true;                       // prevent double rolls
+  setTimeout(() => guard(async () => {
+    const rawRoll = d(20);
+    const data = await rpc('p_taste_test', { ...pc(), iid, raw_d20_roll: rawRoll });
+    await loadState();                                   // refresh stock without redrawing the screen
     render(`<div class="${card} max-w-md mx-auto text-center space-y-3">
       <h3 class="text-xl ${data.success ? 'text-emerald-300' : 'text-red-400'} font-bold">Rolled ${rawRoll} vs DC 10</h3>
       <p class="text-sm">${data.success ? `Success! Learned Trait 1: <strong class="text-amber-300">${esc(data.trait)}</strong>` : `Failed Save! ${esc(data.effect)}`}</p>
       <p class="text-xs text-slate-400 italic">1 unit consumed.</p>
-      <button onclick="playerView('lib')" class="${btn} w-full mt-2">Back to Reagents</button>
+      ${backBtn("playerView('lib')", 'Back to Reagents')}
     </div>`);
-  }, 600);
+  }), 600);
 }
 
 function openAddReagentModal() {
   const modal = $('#add_modal');
+  if (!modal) return;
   modal.classList.remove('hidden');
-  const unlearned = (P.all_ingredients || []);
-
   modal.innerHTML = `<div class="${card} max-w-lg w-full max-h-[80vh] flex flex-col space-y-3">
     <div class="flex justify-between items-center border-b border-slate-800 pb-2">
       <h3 class="text-base font-bold text-amber-300"><i class="fa-solid fa-book-open mr-2"></i>Discover / Add Reagents</h3>
@@ -260,48 +311,48 @@ function openAddReagentModal() {
 
 function filterModalReagents() {
   const q = ($('#mod_search').value || '').toLowerCase();
-  const unlearned = (P.all_ingredients || []).filter(x => (!q || x.name.toLowerCase().includes(q) || (x.biome && x.biome.toLowerCase().includes(q))));
-
-  $('#mod_list').innerHTML = !unlearned.length ? `<p class="text-xs text-slate-500 py-4 text-center">No reagents found matching search.</p>`
-    : unlearned.map(i => `<div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
+  const list = (P.all_ingredients || []).filter(x => !q || x.name.toLowerCase().includes(q) || (x.biome && x.biome.toLowerCase().includes(q)));
+  $('#mod_list').innerHTML = !list.length
+    ? `<p class="text-xs text-slate-500 py-4 text-center">No reagents found matching search.</p>`
+    : list.map(i => `<div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
       <div>
         <div class="font-bold text-amber-200 text-sm"><i class="fa-solid ${esc(i.icon)} mr-1"></i>${esc(i.name)}</div>
         <div class="text-[10px] text-slate-400">${esc(i.biome)} · Base Value: ${i.value || 1}gp</div>
       </div>
-      <button onclick="promptAcquireChoice('${i.id}', '${esc(i.name)}')" class="${btn} text-xs">Acquire</button>
+      <button onclick="promptAcquireChoice('${i.id}')" class="${btn} text-xs">Acquire</button>
     </div>`).join('');
 }
 
-function promptAcquireChoice(iid, ingName) {
+// Takes only the id (names with apostrophes used to break the inline onclick)
+function promptAcquireChoice(iid) {
   $('#add_modal').classList.add('hidden');
   render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
-    <h3 class="text-lg text-amber-200 font-bold">Acquire ${esc(ingName)}</h3>
+    <h3 class="text-lg text-amber-200 font-bold">Acquire ${esc(ingById(iid).name)}</h3>
     <p class="text-xs text-slate-400">Choose how your character is acquiring this ingredient:</p>
     <div class="grid grid-cols-2 gap-3">
       <button onclick="actionPurchase('${iid}')" class="${btn} py-3"><i class="fa-solid fa-coins mr-1"></i> Purchase / Given</button>
       <button onclick="forageInteractive('${iid}')" class="${btn2} py-3"><i class="fa-solid fa-seedling mr-1"></i> Find (Forage)</button>
     </div>
+    <button onclick="playerView('lib')" class="${btn2} w-full">Cancel</button>
   </div>`);
 }
 
-async function actionPurchase(iid) {
-  const val = prompt("Enter quantity purchased or acquired:", "1");
+function actionPurchase(iid) {
+  const val = prompt('Enter quantity purchased or acquired:', '1');
   if (val === null) return playerView('lib');
-  const qty = parseInt(val) || 1;
-  const { error } = await sb.rpc('p_purchase_ing', { uname: creds.u, pass: creds.p, iid, qty_add: qty });
-  if (error) return fail(error);
-  await playerRefresh();
-  playerView('lib');
+  const qty = Math.max(1, parseInt(val) || 1);
+  return guard(async () => {
+    await rpc('p_purchase_ing', { ...pc(), iid, qty_add: qty });
+    await playerRefresh();
+  });
 }
 
 function forageInteractive(iid) {
-  const ing = (P.all_ingredients && P.all_ingredients.find(x => x.id === iid)) || P.ingredients.find(x => x.id === iid) || { name: 'Reagent', rarity: 'common' };
+  const ing = ingById(iid);
   const skill = P.foraging_skill || 'nature';
-  const bonus = P.foraging_bonus || 0;
-
   render(`<div class="${card} max-w-md mx-auto text-center space-y-4">
     <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-magnifying-glass-location mr-2"></i>Foraging: ${esc(ing.name)}</h3>
-    <p class="text-xs text-slate-400">Bonus applied: <strong>+${bonus}</strong> (${esc(skill.toUpperCase())})</p>
+    <p class="text-xs text-slate-400">Bonus applied: <strong>+${P.foraging_bonus || 0}</strong> (${esc(skill.toUpperCase())})</p>
     <div id="dice_box" class="py-6">
       <div id="d20_icon" class="text-5xl text-amber-400"><i class="fa-solid fa-dice-d20"></i></div>
       <div id="roll_status" class="text-sm font-bold mt-2 text-slate-300">Ready to roll search check...</div>
@@ -312,79 +363,121 @@ function forageInteractive(iid) {
   </div>`);
 }
 
-async function runForageD20(iid) {
+function runForageD20(iid) {
   $('#d20_icon').classList.add('animate-dice');
-  $('#roll_status').textContent = "Searching through foliage...";
+  $('#roll_status').textContent = 'Searching through foliage...';
   $('#act_btns').innerHTML = '';
-
-  setTimeout(async () => {
+  setTimeout(() => guard(async () => {
     $('#d20_icon').classList.remove('animate-dice');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const ing = (P.all_ingredients && P.all_ingredients.find(x => x.id === iid)) || P.ingredients.find(x => x.id === iid) || { rarity: 'common' };
-    const bonus = P.foraging_bonus || 0;
-    const total = d20 + bonus;
-
-    let reqDc = 8;
-    const rarity = (ing.rarity || 'common').toLowerCase();
-    if (rarity === 'uncommon') reqDc = 12;
-    if (rarity === 'rare') reqDc = 14;
-    if (rarity === 'extremely rare' || rarity === 'ext-rare') reqDc = 16;
-    if (P.master) reqDc = reqDc - 4;
-
-    const pass = total >= reqDc;
-
-    if (!pass) {
-      await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: d20, d4_yield: 0 });
-      $('#roll_status').innerHTML = `<span class="text-red-400 font-bold">Rolled ${d20} +${bonus} = ${total} (DC${reqDc})</span><br><span class="text-xs text-slate-400">Search unsuccessful. No ingredients found.</span>`;
+    const roll = d(20), bonus = P.foraging_bonus || 0, total = roll + bonus, dc = forageDC(ingById(iid));
+    if (total < dc) {
+      await rpc('p_forage_harvest', { ...pc(), iid, d20_roll: roll, d4_yield: 0 });   // logs the failed search
+      $('#roll_status').innerHTML = `<span class="text-red-400 font-bold">Rolled ${roll} + ${bonus} = ${total} (DC ${dc})</span><br><span class="text-xs text-slate-400">Search unsuccessful. No ingredients found.</span>`;
       $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn2} w-full mt-3">Back to Reagents</button>`;
     } else {
-      $('#roll_status').innerHTML = `<span class="text-emerald-400 font-bold">SUCCESS! Rolled ${d20} +${bonus} = ${total} (DC${reqDc})</span>`;
+      $('#roll_status').innerHTML = `<span class="text-emerald-400 font-bold">SUCCESS! Rolled ${roll} + ${bonus} = ${total} (DC ${dc})</span>`;
       $('#act_btns').innerHTML = `
-        <div id="d4_box" class="my-4">
+        <div class="my-4">
           <div id="d4_icon" class="text-4xl text-amber-400"><i class="fa-solid fa-dice-d4"></i></div>
           <div id="d4_status" class="text-xs text-amber-200 mt-1">Roll for harvest yield (1d4)...</div>
         </div>
-        <button onclick="runForageD4('${iid}', ${d20})" class="${btn} w-full">Roll For Quantity (1d4)</button>
-      `;
+        <button onclick="runForageD4('${iid}', ${roll})" class="${btn} w-full">Roll For Quantity (1d4)</button>`;
     }
-  }, 700);
+  }), 700);
 }
 
-async function runForageD4(iid, originalD20) {
+function runForageD4(iid, originalD20) {
   $('#d4_icon').classList.add('animate-dice');
-  $('#d4_status').textContent = "Harvesting plants...";
-
-  setTimeout(async () => {
+  $('#d4_status').textContent = 'Harvesting plants...';
+  $('#act_btns button').disabled = true;
+  setTimeout(() => guard(async () => {
+    const d4 = d(4);
+    await rpc('p_forage_harvest', { ...pc(), iid, d20_roll: originalD20, d4_yield: d4 });
+    await loadState();     // was playerRefresh(), which redrew the library and erased this screen before the result showed
     $('#d4_icon').classList.remove('animate-dice');
-    const d4 = Math.floor(Math.random() * 4) + 1;
-    
-    const { data, error } = await sb.rpc('p_forage_harvest', { uname: creds.u, pass: creds.p, iid, d20_roll: originalD20, d4_yield: d4 });
-    if (error) return fail(error);
-    
-    await playerRefresh();
-
     $('#d4_status').innerHTML = `<span class="text-emerald-300 font-bold text-base">Harvested +${d4} units!</span>`;
-    $('#act_btns').innerHTML = `<button onclick="playerView('lib')" class="${btn} w-full mt-3">Back to Reagents</button>`;
-  }, 600);
+    $('#act_btns').innerHTML = backBtn("playerView('lib')", 'Back to Reagents');
+  }), 600);
 }
 
-async function editQtyPrompt(iid, curQty) {
-  const val = prompt("Set custom inventory quantity for this ingredient:", curQty);
+function editQtyPrompt(iid, curQty) {
+  const val = prompt('Set custom inventory quantity for this ingredient:', curQty);
   if (val === null) return;
   const newQty = parseInt(val);
-  if (isNaN(newQty)) return;
-  const { error } = await sb.rpc('p_set_qty', { uname: creds.u, pass: creds.p, iid, new_qty: newQty });
-  if (error) return fail(error);
-  await playerRefresh();
+  if (isNaN(newQty) || newQty < 0) return;
+  return guard(async () => {
+    await rpc('p_set_qty', { ...pc(), iid, new_qty: newQty });
+    await playerRefresh();
+  });
 }
 
 function optionsView() {
   const skill = P.foraging_skill || 'nature';
-  const bonus = P.foraging_bonus || 0;
+  const radio = (v, l) => `<label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded-lg flex items-center gap-2 text-xs cursor-pointer"><input type="radio" name="f_skill" value="${v}" ${skill === v ? 'checked' : ''}> ${l}</label>`;
   $('#pv').innerHTML = `<div class="${card} max-w-md mx-auto space-y-4">
     <h3 class="text-lg text-amber-200 font-bold"><i class="fa-solid fa-gear mr-2"></i>Character Options</h3>
     <div><label class="text-xs text-slate-400">Character Name</label><input id="opt_name" class="${inp} mt-1" value="${esc(P.username)}"></div>
     <div>
       <label class="text-xs text-slate-400">Foraging Modifier Skill</label>
-      <div class="flex gap-2 mt-1">
-        <label class="flex-1 bg-slate-950 border border-slate-800 p-2 rounded
+      <div class="flex gap-2 mt-1">${radio('nature', 'Nature / Int')}${radio('survival', 'Survival / Wis')}</div>
+    </div>
+    <div><label class="text-xs text-slate-400">Current Bonus Numerical Value (+Modifier)</label><input id="opt_bonus" type="number" class="${inp} mt-1" value="${P.foraging_bonus || 0}"></div>
+    <button onclick="saveOptions()" class="${btn} w-full">Save Options</button>
+  </div>`;
+}
+
+function saveOptions() {
+  const name = $('#opt_name').value.trim();
+  if (!name) return alert('Character name cannot be empty.');
+  const skill = document.querySelector('input[name="f_skill"]:checked').value;
+  const bonus = parseInt($('#opt_bonus').value) || 0;
+  return guard(async () => {
+    await rpc('p_update_options', { ...pc(), new_name: name, f_skill: skill, f_bonus: bonus });
+    creds.u = name;        // only switch the stored name once the server accepted it
+    await playerRefresh();
+    alert('Options updated!');
+  });
+}
+
+// Placeholder: playerView referenced potView but it was never defined
+function potView() {
+  $('#pv').innerHTML = `<div class="${card} text-sm text-slate-400">Potion storage is not built yet.</div>`;
+}
+
+function brewView() {
+  const opts = P.ingredients.filter(i => (i.qty || 0) > 0).map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${i.qty} in stock)</option>`).join('');
+  $('#pv').innerHTML = !opts
+    ? `<p class="text-slate-500">You have no ingredients in stock. Ask your DM or go foraging!</p>`
+    : `<div class="${card} space-y-3">
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div><label class="text-xs text-slate-400">Reagent #1</label><select id="i1" class="${inp}">${opts}</select></div>
+      <div><label class="text-xs text-slate-400">Reagent #2</label><select id="i2" class="${inp}">${opts}</select></div>
+    </div>
+    <div><label class="text-xs text-slate-400">Solvent</label><select id="sv" class="${inp}"><option value="1">Level 1: Impure Water</option><option value="2">Level 2: Pure Water</option><option value="3">Level 3: Pristine Water</option></select></div>
+    <button onclick="brew()" class="${btn}"><i class="fa-solid fa-mortar-pestle mr-1"></i> Brew Potion</button></div><div id="res" class="mt-4"></div>`;
+}
+
+function brew() {
+  const args = { ...pc(), ing1: $('#i1').value, ing2: $('#i2').value, solvent: +$('#sv').value, idx1: 0, idx2: 0 };
+  return guard(async () => {
+    const data = await rpc('p_brew', args);
+    await loadState();
+    brewView();
+    $('#res').innerHTML = data.ok
+      ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Success! Brewed ${esc(data.trait)}. (1 unit deducted from both reagents)</div>`
+      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">Mismatch! Produced Foul Sludge. (1 unit deducted from both reagents)</div>`;
+  });
+}
+
+// ================= START =================
+if (SUPABASE_URL.startsWith('PASTE')) {
+  render(`<div class="${card}">Open <code>index.html</code> and paste your Supabase URL and anon key.</div>`);
+} else if (typeof supabase === 'undefined') {
+  showFatal('The Supabase library failed to load (blocked or offline).');
+} else {
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  boot();
+}
+</script>
+</body>
+</html>
