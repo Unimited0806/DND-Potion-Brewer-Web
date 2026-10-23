@@ -594,7 +594,10 @@ function craft() {
     brewView();
     $('#res').innerHTML = r.ok
       ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Potion ${r.new ? 'learned' : 'recipe already known'}: <strong>${esc(r.trait)}</strong> (Grade ${r.level}). Added to Potion Storage! 1 water and 1 of each reagent used.</div>`
-      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">The traits didn't match. Foul Sludge (1d4 acid damage). 1 water and 1 of each reagent used.</div>`;
+      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">The traits didn't match. Foul Sludge (1d4 acid damage). 1 water and 1 of each reagent used.${
+          (r.learned || []).length
+            ? `<div class="mt-2 text-sm text-amber-200">Even so, you learned: ${r.learned.map(l => `Trait ${l.slot} of <strong>${esc(l.reagent)}</strong> (${esc(l.trait)})`).join(' and ')}.</div>`
+            : ''}</div>`;
   });
 }
 
