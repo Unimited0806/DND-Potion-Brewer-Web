@@ -594,7 +594,7 @@ function craft() {
     brewView();
     $('#res').innerHTML = r.ok
       ? `<div class="p-4 border border-emerald-500 bg-emerald-950/40 rounded-xl">Potion ${r.new ? 'learned' : 'recipe already known'}: <strong>${esc(r.trait)}</strong> (Grade ${r.level}). Added to Potion Storage! 1 water and 1 of each reagent used.</div>`
-      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">The traits didn't match. Foul Sludge (1d4 acid damage). 1 water and 1 of each reagent used.${
+      : `<div class="p-4 border border-red-500 bg-red-950/40 rounded-xl">The traits didn't match. Foul Sludge (1d4 acid damage) added to Potion Storage. 1 water and 1 of each reagent used.${
           (r.learned || []).length
             ? `<div class="mt-2 text-sm text-amber-200">Even so, you learned: ${r.learned.map(l => `Trait ${l.slot} of <strong>${esc(l.reagent)}</strong> (${esc(l.trait)})`).join(' and ')}.</div>`
             : ''}</div>`;
@@ -614,9 +614,28 @@ function storeView() {
     return typeof v === 'string' ? v : (v && (v.desc || v.description || v.effect)) || '';
   };
 
-  $('#pv').innerHTML = !made.length
+  const sludge = stock['Foul Sludge|0'] || 0;
+  const sludgeCard = !sludge ? '' : `<div class="${card} flex flex-col justify-between border-red-500/30">
+          <div>
+            <div class="font-semibold text-red-300 flex justify-between items-center">
+              <span><i class="fa-solid fa-skull-crossbones mr-2"></i>Foul Sludge</span>
+              <span class="text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded border border-red-500/30">Failed brew</span>
+            </div>
+            <div class="text-xs text-slate-300 mt-1">The result of mismatched traits. Deals 1d4 acid damage.</div>
+            <div class="text-xs text-slate-400 mt-2 pt-2 border-t border-slate-800">
+              <div class="mt-1 text-emerald-400 font-semibold">In Storage: ${sludge}</div>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-800 flex items-center gap-1">
+            <button onclick="updatePotionQty('Foul Sludge', 0, -1)" class="${btn2} text-xs px-2 py-1">-</button>
+            <span class="text-xs font-bold px-2">${sludge}</span>
+            <button onclick="updatePotionQty('Foul Sludge', 0, 1)" class="${btn2} text-xs px-2 py-1">+</button>
+          </div>
+        </div>`;
+
+  $('#pv').innerHTML = !made.length && !sludge
     ? `<div class="${card} text-sm text-slate-400">No potions crafted yet. Brew a potion at the Brewing Station to add it here.</div>`
-    : `<div class="grid md:grid-cols-2 gap-4">${made.map(m => {
+    : `<div class="grid md:grid-cols-2 gap-4">${sludgeCard}${made.map(m => {
         const key = `${m.trait}|${m.level}`;
         const count = stock[key] || 0;
         const e = (P.effects || {})[m.trait], nm = e && (e.potion || e.name);
@@ -656,7 +675,7 @@ function quickCraftPotion(iaId, ibId, level) {
   return guard(async () => {
     const r = await rpc('p_quick_craft', { ...pc(), ia_id: iaId, ib_id: ibId, p_level: level });
     await loadState();
-    storeView();
+    playerView(window.ptab || 'store');
     alert(r.ok ? `Successfully quick-crafted 1x Grade ${level} potion!` : `Quick craft failed: ${r.error}`);
   });
 }
@@ -680,7 +699,11 @@ function potView() {
           <div class="font-semibold text-amber-200 flex justify-between"><span>${esc(m.trait)}${nm ? ` <span class="text-slate-400 text-xs">(${esc(nm)})</span>` : ''}</span><span class="text-xs text-amber-300">Grade ${m.level}</span></div>
           <div class="text-xs text-slate-300 mt-1">${esc(fx(m.trait, m.level))}</div>
           <div class="text-xs text-slate-400 mt-2">Recipe: ${esc(m.a)} + ${esc(m.b)}</div>
-          <div class="text-xs mt-1">Value: <strong class="text-amber-200">${fmtCp(price(m))}</strong></div></div>`;
+          <div class="text-xs mt-1">Value: <strong class="text-amber-200">${fmtCp(price(m))}</strong></div>
+          <div class="mt-3 pt-3 border-t border-slate-800">
+            <button onclick="quickCraftPotion('${m.ia_id}', '${m.ib_id}', ${m.level})" class="${btn} text-xs w-full"><i class="fa-solid fa-mortar-pestle mr-1"></i> Quick Craft</button>
+            <div class="text-[10px] text-slate-500 mt-1 text-center">Uses 1 ${esc(WATER[m.level])} water + 1 of each reagent</div>
+          </div></div>`;
       }).join('')}</div>`;
 }
 
