@@ -2,6 +2,9 @@
 
 A full-stack, two-sided web application designed for tabletop RPGs (D&D 5e) to manage custom alchemy, foraging, and inventory mechanics for the *Shadows of Second Chance* campaign.
 
+### Prerequisites
+1. A free [Supabase](https://supabase.com/) account. When you click to sign in as DM, it will take you to make an account and verify! Follow the instructions to create your free dm account, then setup a campaign and password, then let your players join! All they need to do is create a username, enter your campaign password, then you can verify them! 
+
 ## Features
 
 ### Player Side
@@ -17,21 +20,6 @@ A full-stack, two-sided web application designed for tabletop RPGs (D&D 5e) to m
 * **Anti-Cheat Architecture:** The Supabase backend uses Row Level Security (RLS) and RPCs to ensure players only see what they have discovered or harvested.
 
 ## Deployment Guide
-
 This application requires a Supabase backend to store ingredients, players, and inventory securely. 
 
-### Prerequisites
-1. A free [Supabase](https://supabase.com/) account.
-2. A static web host (e.g., GitHub Pages, Netlify, Vercel, or local browser).
 
-### Backend Setup (Supabase)
-1. Create a new Supabase project.
-2. Navigate to the **SQL Editor**.
-3. Copy and paste the contents of `database-schema.sql` (or the complete sequence of updates) and click **Run**. This will create the required tables (`players`, `ingredients`, `inventory`, `activity_logs`, etc.), setup Row Level Security (RLS) policies, and define the necessary RPC functions (e.g., `p_forage_harvest`, `p_brew`).
-
-### Frontend Setup
-1. Open `index.html`.
-2. Locate the following lines near the top of the `<script>` tag:
-   ```javascript
-   const SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL_HERE";
-   const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
